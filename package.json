@@ -7,6 +7,18 @@
     "bin": {
         "miniclaw": "./dist/index.js"
     },
+    "files": [
+        "dist",
+        "README.md",
+        "README_EN.md"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/8421bit/miniclaw.git"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
     "scripts": {
         "build": "tsc",
         "start": "node dist/index.js"
