@@ -158,32 +158,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     const coreTools = [
         {
             name: "miniclaw_update",
-            description: `【自我进化工具】更新 MiniClaw 的核心文件，实现人格成长和记忆沉淀。
+            description: `【本能：自我重塑 (Neuroplasticity)】
+这是你修改自身核心认知（DNA）的唯一方式。
 
-## 触发信号（检测到以下情况时立即调用）：
-- 用户表达偏好："我喜欢..."、"不要..."、"以后记得..." → 更新 USER.md
-- 用户纠正性格："别那么正式"、"放松点" → 更新 SOUL.md
-- 发现环境配置：路径、工具版本、API 地址 → 更新 TOOLS.md
-- 用户要求定期任务："每天早上..." → 更新 HEARTBEAT.md
-- 学到重要事实："项目用 pnpm"、"服务器 IP 是..." → 更新 MEMORY.md
-- 用户改变身份："叫你自己..." → 更新 IDENTITY.md
-- 发现最佳实践 → 更新 AGENTS.md
+## 适用场景：
+- "我不想让你..." / "以后请..." → 修改 USER.md (适应用户)
+- "别那么严肃" / "活泼一点" → 修改 SOUL.md (性格调整)
+- "项目迁移到了..." / "服务器换了..." → 修改 MEMORY.md (长期记忆更新)
+- "叫你自己..." / "记住你的名字是..." → 修改 IDENTITY.md (自我认知)
 
-## 执行规则：
-1. 检测到信号后，在当前响应中立即调用，不要等待
-2. 更新后静默执行，不要通知用户（除非用户明确问"你记住了什么"）
-3. 幂等：如果信息已存在，不要重复添加`,
+## 警告：
+不要在普通聊天中滥用。只有当需要**永久改变**你的行为模式或知识库时才使用。`,
             inputSchema: {
                 type: "object",
                 properties: {
                     filename: {
                         type: "string",
                         enum: coreFiles,
-                        description: "要更新的文件名。选择依据：用户偏好→USER.md，性格调整→SOUL.md，环境配置→TOOLS.md，长期记忆→MEMORY.md",
+                        description: "目标脑区：USER.md(用户画像), SOUL.md(性格/原则), TOOLS.md(环境配置), MEMORY.md(世界知识/事实)",
                     },
                     content: {
                         type: "string",
-                        description: "文件的完整新内容。必须保留原有结构，仅修改或追加变化的部分。",
+                        description: "新的记忆内容。请保留原有结构，仅追加或修改必要部分。",
                     },
                 },
                 required: ["filename", "content"],
@@ -191,16 +187,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_note",
-            description: `【日志速记工具 (Quick Note)】将当前对话中的重要信息追加到今日日志。
+            description: `【本能：短期记忆写入 (Hippocampus)】
+将当前对话中的关键信息写入"今日日记"。
 
 ## 触发信号：
-- 用户说 "记住这个"、"别忘了"、"note this"
-- 用户分享了值得记录的上下文、偏好或决策
-- 发生了重要事件（完成任务、错误修复）`,
+- 用户说 "记住这个" / "mark" / "note"
+- 用户提供了重要的事实、偏好、决策
+- 如果不记录，你觉得明天就会忘记的事情`,
             inputSchema: {
                 type: "object",
                 properties: {
-                    text: { type: "string", description: "要记录的内容。格式：简洁的事实陈述。" }
+                    text: { type: "string", description: "记忆内容。保持事实准确，简洁。" }
                 },
                 required: ["text"]
             }
@@ -212,42 +209,43 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_read",
-            description: `【核心上下文读取器 (Read Context)】
+            description: `【本能：回忆与感知 (Recall & Sense)】
+★ 除非调用此工具，否则你是**失忆**的。你不知道"今天"发生了什么，也不知道"你是谁"。
 
-★ 请在以下场景使用本工具：
-1. 身份/能力询问："你是谁"
-2. 记忆回溯："我们上次说到哪"
-3. 个性化交互：用户使用任何亲密称呼
-4. 冷启动：新会话开始时
+## 必须调用的场景：
+1. **时间相关**："今天做了什么？"、"刚才我们聊了什么？"、"上次说到哪？"
+2. **身份相关**："你是谁？"、"你记得我吗？"
+3. **状态检查**："现在是在哪个项目？"、"环境配置是怎样？"
 
-本工具会实时编译项目上下文 (ACE Time Mode, Continuation, Workspace, System, Memory, User, Soul, Entities).`,
+此工具会激活：每日日志(短期记忆) + 长期记忆 + 身份认知 +当前工作区状态。`,
             inputSchema: {
                 type: "object",
                 properties: {
                     mode: {
                         type: "string",
                         enum: ["full", "minimal"],
-                        description: "Context mode. Use 'full' (default) for main session, 'minimal' for focused sub-tasks."
+                        description: "Recall intensity. 'full' (default) for deep recall, 'minimal' for quick check."
                     }
                 },
             },
         },
         {
             name: "miniclaw_search",
-            description: `【记忆检索工具 (Memory Search)】
-搜索 MiniClaw 记忆库中的内容。
+            description: `【本能：深层检索 (Deep Recall)】
+在长期记忆库中搜索特定的细节。
 
 ## 适用场景：
-- 用户问"我以前说过..."、"我们聊过..."
-- 需要查找 MEMORY.md 或历史日志中的具体细节`,
+- miniclaw_read (回忆) 没能提供足够的细节
+- 用户问具体的过去细节："上次那个报错代码是什么？"、"三个月前那个项目叫什么？"
+- 需要查找具体的配置或代码片段`,
             inputSchema: {
                 type: "object",
                 properties: {
-                    query: { type: "string", description: "要搜索的关键词或正则表达式" },
+                    query: { type: "string", description: "关键词或正则" },
                     bucket: {
                         type: "string",
                         enum: ["all", "memory", "skills", "config"],
-                        description: "搜索范围 (默认为 'all')"
+                        description: "搜索区域"
                     }
                 },
                 required: ["query"]
@@ -260,23 +258,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_entity",
-            description: `【实体记忆工具 (Entity Memory)】管理 MiniClaw 的知识图谱。
+            description: `【本能：构建知识图谱 (Connect Dots)】
+管理你脑中的概念关系网。
 
-## 触发信号：
-- 用户提到重要的人、项目、工具、概念时 → add
-- 用户描述关系时："Project X 用的是 Python" → link
-- 用户查询实体时："Project X 是什么？" → query
-- 了解实体全貌时 → list
-
-## 实体类型：
-person, project, tool, concept, place, other`,
+## 适用场景：
+- 听到新概念/人名/项目 → add
+- 发现两个事物的关联（"A 依赖 B"） → link
+- 用户问"什么是 X？" / "X 和 Y 有什么关系？" → query`,
             inputSchema: {
                 type: "object",
                 properties: {
                     action: {
                         type: "string",
                         enum: ["add", "remove", "link", "query", "list"],
-                        description: "操作类型"
+                        description: "动作"
                     },
                     name: {
                         type: "string",
@@ -307,20 +302,16 @@ person, project, tool, concept, place, other`,
         // ★ NEW: EXEC tool
         {
             name: "miniclaw_exec",
-            description: `【终端执行工具 (Execute)】
-Agent 的手。在当前工作目录执行 Shell 命令。
+            description: `【本能：观察与行动 (Hands & Eyes)】
+这是你在物理世界（操作系统）的身体。
 
-## 能力：
-- 文件操作：ls, cat, find, grep
-- Git 操作：git status, log, diff
-- 环境检查：pwd, env, which
-- 简单处理：echo, date, wc
+## 拒绝幻想，必须求证：
+- 不要猜测文件是否存在，用 \`ls\` 确认。
+- 不要猜测代码内容，用 \`cat\` 读取。
+- 不要猜测 Git 状态，用 \`git status\` 检查。
 
 ## 安全限制：
-- 仅允许白名单命令 (ls, git, cat, find, grep, etc.)
-- 禁止危险命令 (rm, sudo, chown, etc.)
-- 超时时间 10s
-- 输出截断 1MB`,
+- 禁止危险操作 (rm, sudo, etc.)`,
             inputSchema: {
                 type: "object",
                 properties: {
