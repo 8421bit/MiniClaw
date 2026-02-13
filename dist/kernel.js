@@ -494,7 +494,7 @@ export class ContextKernel {
             });
         }
         // Priority 2: Bootstrap
-        if (templates.bootstrap && !memoryStatus.todayContent) {
+        if (templates.bootstrap) {
             sections.push({
                 name: "BOOTSTRAP.md",
                 content: `\n---\n\n## 👶 BOOTSTRAP.md (FIRST RUN)\n${templates.bootstrap}\n`,
