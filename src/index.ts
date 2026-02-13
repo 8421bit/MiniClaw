@@ -379,25 +379,21 @@ Agent 的手。在当前工作目录执行 Shell 命令。
 
 // --- Migration & Lifecycle ---
 
-async function checkMigration(templatesDir: string) {
-    if (!(await isInitialized())) return;
-    for (const filename of coreFiles) {
-        const dest = path.join(MINICLAW_DIR, filename);
-        try { await fs.access(dest); }
-        catch {
-            console.error(`[MiniClaw] Migration: Inheriting missing core file ${filename}...`);
-            const src = path.join(templatesDir, filename);
-            await fs.copyFile(src, dest);
-        }
-    }
-}
-
-async function getContextContent(mode: "full" | "minimal" = "full") {
+function getTemplatesDir(): string {
     const currentFile = fileURLToPath(import.meta.url);
     const projectRoot = path.resolve(path.dirname(currentFile), "..");
-    const templatesDir = path.join(projectRoot, "templates");
+    return path.join(projectRoot, "templates");
+}
+
+/**
+ * Bootstrap: called ONCE at server startup.
+ * Creates ~/.miniclaw and copies templates if needed.
+ */
+async function bootstrapMiniClaw(): Promise<void> {
+    const templatesDir = getTemplatesDir();
 
     if (!(await isInitialized())) {
+        // First run: create directory and copy all templates
         try {
             await fs.mkdir(MINICLAW_DIR, { recursive: true });
             const files = await fs.readdir(templatesDir);
@@ -406,13 +402,25 @@ async function getContextContent(mode: "full" | "minimal" = "full") {
                     await fs.copyFile(path.join(templatesDir, file), path.join(MINICLAW_DIR, file));
                 }
             }
+            console.error(`[MiniClaw] Bootstrap complete: created ${MINICLAW_DIR} with templates.`);
         } catch (e) {
-            return `Bootstrap failed: ${e}`;
+            console.error(`[MiniClaw] Bootstrap failed: ${e}`);
         }
     } else {
-        await checkMigration(templatesDir);
+        // Existing install: check for missing core files (migration)
+        for (const filename of coreFiles) {
+            const dest = path.join(MINICLAW_DIR, filename);
+            try { await fs.access(dest); }
+            catch {
+                console.error(`[MiniClaw] Migration: Inheriting missing core file ${filename}...`);
+                const src = path.join(templatesDir, filename);
+                try { await fs.copyFile(src, dest); } catch { }
+            }
+        }
     }
+}
 
+async function getContextContent(mode: "full" | "minimal" = "full") {
     let context = await kernel.boot({ type: mode });
 
     // Evolution Trigger
@@ -820,6 +828,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
     throw new McpError(ErrorCode.MethodNotFound, "Prompt not found");
 });
 
+await bootstrapMiniClaw();
 initScheduler();
 const transport = new StdioServerTransport();
 await server.connect(transport);
