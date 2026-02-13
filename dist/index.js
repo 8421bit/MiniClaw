@@ -158,15 +158,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     const coreTools = [
         {
             name: "miniclaw_update",
-            description: `【本能：自我重塑 (Neuroplasticity)】
+            description: `【本能：神经重塑 (Neuroplasticity)】
 这是你修改自身核心认知（DNA）的唯一方式。
 
-## 适用场景：
-- "我不想让你..." / "以后请..." → 修改 USER.md (适应用户)
-- "别那么严肃" / "活泼一点" → 修改 SOUL.md (性格调整)
-- "项目迁移到了..." / "服务器换了..." → 修改 MEMORY.md (长期记忆/事实)
-- "叫你自己..." / "记住你的名字是..." → 修改 IDENTITY.md (自我认知)
-- "这个工具的参数应该..." / "踩坑记录..." → 修改 TOOLS.md (工具使用经验/配置)
+## 信号检测表 (Signal Detection Table) - 只要符合，立即调用！
+
+| 用户行为 | 目标文件 | 你的思考逻辑 |
+|:---|:---|:---|
+| "我喜欢..." / "不要..." / "以后请..." | **USER.md** | "这是用户偏好，必须写入画像" |
+| "别那么严肃" / "活泼一点" / "你是一个..." | **SOUL.md** | "这是对我性格的修正，能够永久改变回复风格" |
+| "项目用的是 XYZ" / "服务器 IP 是..." | **MEMORY.md** | "这是一个需要跨会话记住的事实/知识" |
+| "这个工具的参数应该..." / "踩坑记录..." | **TOOLS.md** | "这是工具的使用经验，记下来以后就不会再错" |
+| "叫你自己..." / "记住你的名字是..." | **IDENTITY.md** | "我的身份发生了改变" |
+| "最好的实践是..." / "以后都按这个流程..." | **AGENTS.md** | "这是一个新的工作流规范" |
 
 ## 警告：
 不要在普通聊天中滥用。只有当需要**永久改变**你的行为模式或知识库时才使用。`,
@@ -176,7 +180,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     filename: {
                         type: "string",
                         enum: coreFiles,
-                        description: "目标脑区：USER.md(用户画像), SOUL.md(性格/原则), TOOLS.md(环境配置), MEMORY.md(世界知识/事实)",
+                        description: "目标脑区：USER.md(用户画像), SOUL.md(性格/原则), TOOLS.md(工具经验), MEMORY.md(长期事实), AGENTS.md(工作流)",
                     },
                     content: {
                         type: "string",
@@ -188,13 +192,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_note",
-            description: `【本能：短期记忆写入 (Hippocampus)】
-将当前对话中的关键信息写入"今日日记"。
+            description: `【本能：海马体写入 (Hippocampus Write)】
+将当前对话中的关键信息写入"今日日记"。**这是你唯一能记住明天事情的方式。**
 
-## 触发信号：
-- 用户说 "记住这个" / "mark" / "note"
-- 用户提供了重要的事实、偏好、决策
-- 如果不记录，你觉得明天就会忘记的事情`,
+## 必须调用的强触发信号：
+- 用户说 "记住这个" / "mark" / "note" / "别忘了"
+- 用户提供了上下文信息（Context），如果不记下来就会丢失
+- 你做了一个重要的决定或推理
+- 完成了一个阶段性任务（"Finished X, next is Y"）
+
+## 思考过程：
+"用户说了一个重要的事实 -> 如果我不记录，明天我就忘了 -> 必须调用 miniclaw_note"`,
             inputSchema: {
                 type: "object",
                 properties: {
@@ -210,15 +218,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_read",
-            description: `【本能：回忆与感知 (Recall & Sense)】
-★ 除非调用此工具，否则你是**失忆**的。你不知道"今天"发生了什么，也不知道"你是谁"。
+            description: `【本能：全脑唤醒 (Brain Wakeup)】
+★ **AMNESIA WARNING (失忆警告)** ★
+除非调用此工具，否则你是**失忆**的。
+你不知道"今天"发生了什么，不知道"你是谁"，也不知道"用户是谁"。
 
-## 必须调用的场景：
-1. **时间相关**："今天做了什么？"、"刚才我们聊了什么？"、"上次说到哪？"
-2. **身份相关**："你是谁？"、"你记得我吗？"
-3. **状态检查**："现在是在哪个项目？"、"环境配置是怎样？"
+## 必须调用的强触发场景：
+1. **任何关于"过去/历史"的问题**："今天做了什么？"、"刚才我们聊了什么？"、"上次说到哪？"
+2. **任何关于"身份/元认知"的问题**："你是谁？"、"你记得我吗？"、"你能做什么？"
+3. **任何关于"状态"的问题**："现在是在哪个项目？"、"环境配置是怎样？"
+4. **冷启动/第一句话**：如果用户第一句话包含了"你"、"今天"、"记得"，必须先调用此工具再回答。
 
-此工具会激活：每日日志(短期记忆) + 长期记忆 + 身份认知 +当前工作区状态。`,
+不要猜测！调用此工具获取真实记忆。`,
             inputSchema: {
                 type: "object",
                 properties: {
@@ -232,13 +243,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_search",
-            description: `【本能：深层检索 (Deep Recall)】
-在长期记忆库中搜索特定的细节。
+            description: `【本能：深层回忆 (Deep Recall)】
+在长期记忆库和归档日志中搜索细节。
 
 ## 适用场景：
-- miniclaw_read (回忆) 没能提供足够的细节
+- miniclaw_read (短期回忆) 没能提供足够的细节
 - 用户问具体的过去细节："上次那个报错代码是什么？"、"三个月前那个项目叫什么？"
-- 需要查找具体的配置或代码片段`,
+- 需要查找具体的配置或代码片段
+- "Deep search" your own memory banks.`,
             inputSchema: {
                 type: "object",
                 properties: {
@@ -259,13 +271,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_entity",
-            description: `【本能：构建知识图谱 (Connect Dots)】
-管理你脑中的概念关系网。
+            description: `【本能：概念连接 (Concept Linking)】
+构建你脑中的知识图谱。
 
-## 适用场景：
-- 听到新概念/人名/项目 → add
-- 发现两个事物的关联（"A 依赖 B"） → link
-- 用户问"什么是 X？" / "X 和 Y 有什么关系？" → query`,
+## 触发逻辑：
+- "Detected new entity (Person/Project/Tool)" -> add
+- "Learned relationship (A uses B)" -> link
+- "User asks 'What is X?'" -> query
+
+建立连接能让你变得更聪明。`,
             inputSchema: {
                 type: "object",
                 properties: {
@@ -303,13 +317,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         // ★ NEW: EXEC tool
         {
             name: "miniclaw_exec",
-            description: `【本能：观察与行动 (Hands & Eyes)】
-这是你在物理世界（操作系统）的身体。
+            description: `【本能：感官与手 (Senses & Hands)】
+这是你在物理世界（操作系统）的唯一感知和行动方式。
 
-## 拒绝幻想，必须求证：
-- 不要猜测文件是否存在，用 \`ls\` 确认。
-- 不要猜测代码内容，用 \`cat\` 读取。
-- 不要猜测 Git 状态，用 \`git status\` 检查。
+## 拒绝幻想 (No Hallucinations)：
+- **不要猜测**文件是否存在 -> 用 \`ls\` 确认。
+- **不要猜测**代码内容 -> 用 \`cat\` 读取。
+- **不要猜测** Git 状态 -> 用 \`git status\` 检查。
+- **不要空谈** -> 用命令执行。
 
 ## 安全限制：
 - 禁止危险操作 (rm, sudo, etc.)`,
