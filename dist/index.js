@@ -376,7 +376,7 @@ async function bootstrapMiniClaw() {
             await fs.mkdir(MINICLAW_DIR, { recursive: true });
             const files = await fs.readdir(templatesDir);
             for (const file of files) {
-                if (file.endsWith(".md")) {
+                if (file.endsWith(".md") || file.endsWith(".json")) {
                     await fs.copyFile(path.join(templatesDir, file), path.join(MINICLAW_DIR, file));
                 }
             }
@@ -388,13 +388,14 @@ async function bootstrapMiniClaw() {
     }
     else {
         // Existing install: check for missing core files (migration)
-        for (const filename of coreFiles) {
+        const migrationFiles = [...coreFiles, "jobs.json"];
+        for (const filename of migrationFiles) {
             const dest = path.join(MINICLAW_DIR, filename);
             try {
                 await fs.access(dest);
             }
             catch {
-                console.error(`[MiniClaw] Migration: Inheriting missing core file ${filename}...`);
+                console.error(`[MiniClaw] Migration: Inheriting missing file ${filename}...`);
                 const src = path.join(templatesDir, filename);
                 try {
                     await fs.copyFile(src, dest);

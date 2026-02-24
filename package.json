@@ -5,7 +5,8 @@
     "main": "dist/index.js",
     "type": "module",
     "bin": {
-        "miniclaw": "./dist/index.js"
+        "miniclaw": "./dist/index.js",
+        "miniclaw-scheduler": "./dist/scheduler.js"
     },
     "files": [
         "dist",
@@ -22,7 +23,8 @@
     },
     "scripts": {
         "build": "tsc",
-        "start": "node dist/index.js"
+        "start": "node dist/index.js",
+        "scheduler": "node dist/scheduler.js"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.0.1",
