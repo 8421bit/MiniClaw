@@ -14,7 +14,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { cronMatchesNow, getNowInTz, withFileLock } from "./utils.js";
+import { cronMatchesNow, getNowInTz } from "./utils.js";
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
@@ -29,18 +29,8 @@ interface Job {
     id: string;
     name: string;
     enabled: boolean;
-    schedule: {
-        kind: "cron";
-        expr: string;
-        tz?: string;
-    };
-    payload: {
-        kind: "systemEvent";
-        text: string;
-    };
-    agentId?: string;
-    sessionTarget?: string;
-    wakeMode?: string;
+    schedule: { kind: "cron"; expr: string; tz?: string; };
+    payload: { kind: "systemEvent"; text: string; };
     createdAtMs?: number;
     updatedAtMs?: number;
 }
@@ -49,15 +39,11 @@ interface SchedulerState {
     lastRuns: Record<string, string>;
 }
 
-// ─── State Management ────────────────────────────────────────────────────────
+// ─── State ───────────────────────────────────────────────────────────────────
 
 async function loadState(): Promise<SchedulerState> {
-    try {
-        const raw = await fs.readFile(SCHEDULER_STATE, "utf-8");
-        return JSON.parse(raw);
-    } catch {
-        return { lastRuns: {} };
-    }
+    try { return JSON.parse(await fs.readFile(SCHEDULER_STATE, "utf-8")); }
+    catch { return { lastRuns: {} }; }
 }
 
 async function saveState(state: SchedulerState): Promise<void> {
@@ -67,15 +53,9 @@ async function saveState(state: SchedulerState): Promise<void> {
 // ─── Heartbeat Injection ─────────────────────────────────────────────────────
 
 async function injectHeartbeat(job: Job, now: Date): Promise<void> {
-    const timestamp = now.toISOString().replace("T", " ").substring(0, 19);
-    const header = `\n\n---\n## 🔔 Scheduled: ${job.name} (${timestamp})\n`;
-    const body = `${job.payload.text}\n`;
-
-    // Use file lock to prevent concurrent writes from main session
-    await withFileLock(HEARTBEAT_FILE, async () => {
-        await fs.appendFile(HEARTBEAT_FILE, header + body, "utf-8");
-    });
-    console.error(`[Scheduler] ✅ Injected job "${job.name}" into HEARTBEAT.md`);
+    const ts = now.toISOString().replace("T", " ").substring(0, 19);
+    await fs.appendFile(HEARTBEAT_FILE, `\n\n---\n## 🔔 Scheduled: ${job.name} (${ts})\n${job.payload.text}\n`, "utf-8");
+    console.error(`[Scheduler] ✅ Injected "${job.name}"`);
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────

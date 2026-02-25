@@ -98,7 +98,7 @@ Your MiniClaw is unique.
 
 ## 🏗️ Architecture: The Micro-Kernel
 
-MiniClaw follows a **Micro-Kernel Architecture** (~2,600 LOC), avoiding the bloat of traditional agent frameworks.
+MiniClaw follows a **Micro-Kernel Architecture** (~2,400 LOC), avoiding the bloat of traditional agent frameworks.
 
 | Layer | Component | Responsibility |
 |-------|-----------|----------------|

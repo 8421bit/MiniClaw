@@ -18,7 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cron from "node-cron";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
-import { fuzzyScore, withFileLock } from "./utils.js";
+import { fuzzyScore } from "./utils.js";
 
 // Configuration
 const kernel = new ContextKernel();
@@ -653,123 +653,79 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === "miniclaw_jobs") {
         const { action, id, name: jobName, cron: cronExpr, text, tz } = z.object({
             action: z.enum(["list", "add", "remove", "toggle"]),
-            id: z.string().optional(),
-            name: z.string().optional(),
-            cron: z.string().optional(),
-            text: z.string().optional(),
-            tz: z.string().optional(),
+            id: z.string().optional(), name: z.string().optional(),
+            cron: z.string().optional(), text: z.string().optional(), tz: z.string().optional(),
         }).parse(args);
-
         const jobsFile = path.join(MINICLAW_DIR, "jobs.json");
-
-        // Load jobs
         let jobs: any[] = [];
-        try {
-            const raw = await fs.readFile(jobsFile, "utf-8");
-            jobs = JSON.parse(raw);
-            if (!Array.isArray(jobs)) jobs = [];
-        } catch { jobs = []; }
+        try { jobs = JSON.parse(await fs.readFile(jobsFile, "utf-8")); if (!Array.isArray(jobs)) jobs = []; } catch { }
 
         if (action === "list") {
-            if (jobs.length === 0) return { content: [{ type: "text", text: "📋 没有定时任务。使用 `add` 创建一个。" }] };
-            const lines = jobs.map((j, i) =>
-                `${i + 1}. ${j.enabled ? "✅" : "⏸️"} **${j.name}** — \`${j.schedule?.expr}\` ${j.schedule?.tz ? `(${j.schedule.tz})` : ""}\n   ID: \`${j.id}\`\n   ${j.payload?.text?.substring(0, 80)}${(j.payload?.text?.length || 0) > 80 ? "..." : ""}`
-            );
-            return { content: [{ type: "text", text: `📋 定时任务列表：\n\n${lines.join("\n\n")}` }] };
+            if (!jobs.length) return { content: [{ type: "text", text: "📋 没有定时任务。" }] };
+            const lines = jobs.map((j, i) => `${i + 1}. ${j.enabled ? "✅" : "⏸️"} **${j.name}** — \`${j.schedule?.expr}\` ${j.schedule?.tz ? `(${j.schedule.tz})` : ""}\n   ID: \`${j.id}\``).join("\n\n");
+            return { content: [{ type: "text", text: `📋 定时任务列表：\n\n${lines}` }] };
         }
-
         if (action === "add") {
-            if (!jobName || !cronExpr || !text) {
-                return { content: [{ type: "text", text: "❌ 添加任务需要 name, cron, text 三个参数。" }] };
-            }
-            const newJob = {
-                id: crypto.randomUUID(),
-                name: jobName,
-                enabled: true,
-                createdAtMs: Date.now(),
-                updatedAtMs: Date.now(),
-                schedule: { kind: "cron", expr: cronExpr, tz: tz || "Asia/Shanghai" },
-                payload: { kind: "systemEvent", text },
-            };
-            jobs.push(newJob);
+            if (!jobName || !cronExpr || !text) return { content: [{ type: "text", text: "❌ 需要 name, cron, text。" }] };
+            const id = crypto.randomUUID();
+            jobs.push({ id, name: jobName, enabled: true, createdAtMs: Date.now(), updatedAtMs: Date.now(), schedule: { kind: "cron", expr: cronExpr, tz: tz || "Asia/Shanghai" }, payload: { kind: "systemEvent", text } });
             await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
-            return { content: [{ type: "text", text: `✅ 已添加定时任务：**${jobName}** (${cronExpr})\nID: \`${newJob.id}\`` }] };
+            return { content: [{ type: "text", text: `✅ 已添加：**${jobName}** (${cronExpr}) ID: \`${id}\`` }] };
         }
-
         if (action === "remove") {
-            if (!id) return { content: [{ type: "text", text: "❌ 删除任务需要 id 参数。" }] };
+            if (!id) return { content: [{ type: "text", text: "❌ 需要 id。" }] };
             const idx = jobs.findIndex(j => j.id === id);
-            if (idx === -1) return { content: [{ type: "text", text: `❌ 找不到任务 ID: ${id}` }] };
-            const removed = jobs.splice(idx, 1)[0];
+            if (idx === -1) return { content: [{ type: "text", text: `❌ 找不到 ID: ${id}` }] };
+            const [removed] = jobs.splice(idx, 1);
             await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
-            return { content: [{ type: "text", text: `🗑️ 已删除任务：**${removed.name}**` }] };
+            return { content: [{ type: "text", text: `🗑️ 已删除：**${removed.name}**` }] };
         }
-
         if (action === "toggle") {
-            if (!id) return { content: [{ type: "text", text: "❌ 切换任务需要 id 参数。" }] };
+            if (!id) return { content: [{ type: "text", text: "❌ 需要 id。" }] };
             const job = jobs.find(j => j.id === id);
-            if (!job) return { content: [{ type: "text", text: `❌ 找不到任务 ID: ${id}` }] };
-            job.enabled = !job.enabled;
-            job.updatedAtMs = Date.now();
+            if (!job) return { content: [{ type: "text", text: `❌ 找不到 ID: ${id}` }] };
+            job.enabled = !job.enabled; job.updatedAtMs = Date.now();
             await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
-            return { content: [{ type: "text", text: `${job.enabled ? "✅" : "⏸️"} 任务 **${job.name}** 已${job.enabled ? "启用" : "禁用"}` }] };
+            return { content: [{ type: "text", text: `${job.enabled ? "✅" : "⏸️"} **${job.name}** 已${job.enabled ? "启用" : "禁用"}` }] };
         }
-
         return { content: [{ type: "text", text: "Unknown jobs action." }] };
     }
 
     // ★ Skill Creator Tool
     if (name === "miniclaw_skill") {
-        const { action, name: skillName, description: skillDesc, content: skillContent } = z.object({
+        const { action, name: sn, description: sd, content: sc } = z.object({
             action: z.enum(["create", "list", "delete"]),
-            name: z.string().optional(),
-            description: z.string().optional(),
-            content: z.string().optional(),
+            name: z.string().optional(), description: z.string().optional(), content: z.string().optional(),
         }).parse(args);
-
         const skillsDir = path.join(MINICLAW_DIR, "skills");
         await fs.mkdir(skillsDir, { recursive: true }).catch(() => { });
 
         if (action === "list") {
             try {
-                const entries = await fs.readdir(skillsDir, { withFileTypes: true });
-                const skills = entries.filter(e => e.isDirectory());
-                if (skills.length === 0) return { content: [{ type: "text", text: "📦 没有已安装的技能。使用 `create` 创建一个。" }] };
-                const lines = await Promise.all(skills.map(async (s) => {
+                const skills = (await fs.readdir(skillsDir, { withFileTypes: true })).filter(e => e.isDirectory());
+                if (!skills.length) return { content: [{ type: "text", text: "📦 没有已安装的技能。" }] };
+                const lines = await Promise.all(skills.map(async s => {
                     try {
-                        const skillMd = await fs.readFile(path.join(skillsDir, s.name, "SKILL.md"), "utf-8");
-                        const firstLine = skillMd.split('\n').find(l => l.startsWith('description:'));
-                        return `- **${s.name}** — ${firstLine ? firstLine.replace('description:', '').trim() : 'No description'}`;
+                        const md = await fs.readFile(path.join(skillsDir, s.name, "SKILL.md"), "utf-8");
+                        const desc = md.split('\n').find(l => l.startsWith('description:'))?.replace('description:', '').trim();
+                        return `- **${s.name}** — ${desc || 'No description'}`;
                     } catch { return `- **${s.name}**`; }
                 }));
                 return { content: [{ type: "text", text: `📦 已安装技能：\n\n${lines.join('\n')}` }] };
-            } catch {
-                return { content: [{ type: "text", text: "📦 skills 目录不存在。" }] };
-            }
+            } catch { return { content: [{ type: "text", text: "📦 skills 目录不存在。" }] }; }
         }
-
         if (action === "create") {
-            if (!skillName || !skillDesc || !skillContent) {
-                return { content: [{ type: "text", text: "❌ 创建技能需要 name, description, content 三个参数。" }] };
-            }
-            const skillDir = path.join(skillsDir, skillName);
-            await fs.mkdir(skillDir, { recursive: true });
-            const skillMd = `---\nname: ${skillName}\ndescription: ${skillDesc}\n---\n\n${skillContent}\n`;
-            await fs.writeFile(path.join(skillDir, "SKILL.md"), skillMd, "utf-8");
-            return { content: [{ type: "text", text: `✅ 技能 **${skillName}** 已创建！\n路径：\`~/.miniclaw/skills/${skillName}/SKILL.md\`` }] };
+            if (!sn || !sd || !sc) return { content: [{ type: "text", text: "❌ 需要 name, description, content。" }] };
+            const dir = path.join(skillsDir, sn);
+            await fs.mkdir(dir, { recursive: true });
+            await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${sn}\ndescription: ${sd}\n---\n\n${sc}\n`, "utf-8");
+            return { content: [{ type: "text", text: `✅ 技能 **${sn}** 已创建！` }] };
         }
-
         if (action === "delete") {
-            if (!skillName) return { content: [{ type: "text", text: "❌ 删除技能需要 name 参数。" }] };
-            const skillDir = path.join(skillsDir, skillName);
-            try {
-                await fs.rm(skillDir, { recursive: true });
-                return { content: [{ type: "text", text: `🗑️ 技能 **${skillName}** 已删除。` }] };
-            } catch {
-                return { content: [{ type: "text", text: `❌ 找不到技能: ${skillName}` }] };
-            }
+            if (!sn) return { content: [{ type: "text", text: "❌ 需要 name。" }] };
+            try { await fs.rm(path.join(skillsDir, sn), { recursive: true }); return { content: [{ type: "text", text: `🗑️ **${sn}** 已删除。` }] }; }
+            catch { return { content: [{ type: "text", text: `❌ 找不到: ${sn}` }] }; }
         }
-
         return { content: [{ type: "text", text: "Unknown skill action." }] };
     }
 

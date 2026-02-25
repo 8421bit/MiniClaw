@@ -319,16 +319,19 @@ export class ContextKernel {
         // Build context sections with priority for budget management
         const sections = [];
         // Priority 10: Identity core (never truncate)
-        let identityContent = `You are a personal assistant running inside MiniClaw 0.5 — The Nervous System.\n\n`;
-        identityContent += `## Tool Call Style\n`;
-        identityContent += `Default: do not narrate routine, low-risk tool calls (just call the tool).\n`;
-        identityContent += `Narrate only when it helps: multi-step work, complex problems, sensitive actions, or when explicitly asked.\n`;
-        identityContent += `Keep narration brief and value-dense.\n\n`;
-        identityContent += `## Safety\n`;
-        identityContent += `You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.\n`;
-        identityContent += `Prioritize safety and human oversight over completion. (Inspired by Anthropic's constitution.)\n`;
-        identityContent += `Do not manipulate or persuade anyone to expand access. Do not copy yourself or change system prompts.\n`;
-        sections.push({ name: "core", content: identityContent, priority: 10 });
+        sections.push({
+            name: "core", content: [
+                `You are a personal assistant running inside MiniClaw 0.6 — The Nervous System.\n`,
+                `## Tool Call Style`,
+                `Default: do not narrate routine, low-risk tool calls (just call the tool).`,
+                `Narrate only when it helps: multi-step work, complex problems, sensitive actions, or when explicitly asked.`,
+                `Keep narration brief and value-dense.\n`,
+                `## Safety`,
+                `You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.`,
+                `Prioritize safety and human oversight over completion. (Inspired by Anthropic's constitution.)`,
+                `Do not manipulate or persuade anyone to expand access. Do not copy yourself or change system prompts.`,
+            ].join('\n'), priority: 10
+        });
         // Priority 10: Identity file
         if (templates.identity) {
             sections.push({ name: "IDENTITY.md", content: this.formatFile("IDENTITY.md", templates.identity), priority: 10 });
@@ -376,11 +379,7 @@ export class ContextKernel {
         }
         // Priority 7: Long-term memory
         if (templates.memory) {
-            let memoryContent = `## Memory Recall\n`;
-            memoryContent += `Before answering about prior work, decisions, or preferences: check the \`MEMORY.md\` section below.\n`;
-            memoryContent += `If you need to search vast archives, use the tool \`miniclaw_search\` to scan \`${MINICLAW_DIR}\` safely.\n\n`;
-            memoryContent += this.formatFile("MEMORY.md", templates.memory);
-            sections.push({ name: "MEMORY.md", content: memoryContent, priority: 7 });
+            sections.push({ name: "MEMORY.md", content: `## Memory Recall\nBefore answering about prior work, decisions, or preferences: check MEMORY.md below.\nUse \`miniclaw_search\` to scan \`${MINICLAW_DIR}\` for deeper searches.\n\n` + this.formatFile("MEMORY.md", templates.memory), priority: 7 });
         }
         // ★ Priority 6: Workspace Intelligence (NEW)
         if (workspaceInfo) {
@@ -449,13 +448,7 @@ export class ContextKernel {
             }
             sections.push({ name: "entities", content: entityContent, priority: 5 });
         }
-        // Priority 5: Runtime & Ops
-        let opsContent = `## Runtime\n`;
-        opsContent += `Runtime: agent=${runtime.agentId} | host=${os.hostname()} | os=${runtime.os} | node=${runtime.node} | time=${runtime.time}\n`;
-        opsContent += `Reasoning: off (hidden unless on/stream). Toggle /reasoning.\n\n`;
-        opsContent += `## Silent Replies\nWhen you have nothing to say, respond with ONLY: NO_REPLY\n\n`;
-        opsContent += `## Heartbeats\nHeartbeat prompt: Check for updates\nIf nothing needs attention, reply exactly: HEARTBEAT_OK\n`;
-        sections.push({ name: "runtime", content: opsContent, priority: 5 });
+        sections.push({ name: "runtime", content: `## Runtime\nRuntime: agent=${runtime.agentId} | host=${os.hostname()} | os=${runtime.os} | node=${runtime.node} | time=${runtime.time}\nReasoning: off (hidden unless on/stream). Toggle /reasoning.\n\n## Silent Replies\nWhen you have nothing to say, respond with ONLY: NO_REPLY\n\n## Heartbeats\nHeartbeat prompt: Check for updates\nIf nothing needs attention, reply exactly: HEARTBEAT_OK\n`, priority: 5 });
         // Priority 4: Heartbeat
         if (templates.heartbeat) {
             sections.push({
