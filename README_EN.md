@@ -98,7 +98,7 @@ Your MiniClaw is unique.
 
 ## 🏗️ Architecture: The Micro-Kernel
 
-MiniClaw follows a **Micro-Kernel Architecture** (~2,700 LOC), avoiding the bloat of traditional agent frameworks.
+MiniClaw follows a **Micro-Kernel Architecture** (~2,600 LOC), avoiding the bloat of traditional agent frameworks.
 
 | Layer | Component | Responsibility |
 |-------|-----------|----------------|
@@ -123,6 +123,43 @@ npm run build
 
 # 3. Register (Automatic Script)
 ./scripts/install.sh
+```
+
+---
+
+## ⏰ Cron Scheduler
+
+MiniClaw supports automatic execution of scheduled tasks via macOS/Linux `crontab` (e.g., daily reviews, scheduled checks).
+
+### How It Works
+
+1. System cron runs the scheduler script every minute
+2. Script reads tasks from `~/.miniclaw/jobs.json`
+3. Matches current time → injects due tasks into `HEARTBEAT.md`
+4. Next time you chat with Agent, it sees and executes these instructions
+
+### Setup
+
+```bash
+# 1. Edit crontab
+crontab -e
+
+# 2. Add this line (runs every minute)
+* * * * * /usr/local/bin/node /path/to/miniclaw/dist/scheduler.js >> /tmp/miniclaw-scheduler.log 2>&1
+```
+
+> **Tip**: Replace `/path/to/miniclaw` with your actual install path.
+
+### Managing Jobs
+
+Use the `miniclaw_jobs` tool in conversation:
+
+```text
+"Add a daily task: check emails every morning at 9am"
+→ Agent calls miniclaw_jobs(action="add", name="Daily Email Check", cron="0 9 * * *", text="Check emails...")
+
+"List all scheduled tasks"
+→ Agent calls miniclaw_jobs(action="list")
 ```
 
 ---
