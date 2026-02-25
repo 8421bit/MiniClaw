@@ -13,7 +13,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { cronMatchesNow, getNowInTz } from "./utils.js";
+import { cronMatchesNow, getNowInTz, withFileLock } from "./utils.js";
 // ─── Paths ───────────────────────────────────────────────────────────────────
 const MINICLAW_DIR = path.join(os.homedir(), ".miniclaw");
 const JOBS_FILE = path.join(MINICLAW_DIR, "jobs.json");
@@ -37,7 +37,10 @@ async function injectHeartbeat(job, now) {
     const timestamp = now.toISOString().replace("T", " ").substring(0, 19);
     const header = `\n\n---\n## 🔔 Scheduled: ${job.name} (${timestamp})\n`;
     const body = `${job.payload.text}\n`;
-    await fs.appendFile(HEARTBEAT_FILE, header + body, "utf-8");
+    // Use file lock to prevent concurrent writes from main session
+    await withFileLock(HEARTBEAT_FILE, async () => {
+        await fs.appendFile(HEARTBEAT_FILE, header + body, "utf-8");
+    });
     console.error(`[Scheduler] ✅ Injected job "${job.name}" into HEARTBEAT.md`);
 }
 // ─── Main ────────────────────────────────────────────────────────────────────

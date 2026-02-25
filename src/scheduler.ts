@@ -14,7 +14,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { cronMatchesNow, getNowInTz } from "./utils.js";
+import { cronMatchesNow, getNowInTz, withFileLock } from "./utils.js";
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
@@ -71,7 +71,10 @@ async function injectHeartbeat(job: Job, now: Date): Promise<void> {
     const header = `\n\n---\n## 🔔 Scheduled: ${job.name} (${timestamp})\n`;
     const body = `${job.payload.text}\n`;
 
-    await fs.appendFile(HEARTBEAT_FILE, header + body, "utf-8");
+    // Use file lock to prevent concurrent writes from main session
+    await withFileLock(HEARTBEAT_FILE, async () => {
+        await fs.appendFile(HEARTBEAT_FILE, header + body, "utf-8");
+    });
     console.error(`[Scheduler] ✅ Injected job "${job.name}" into HEARTBEAT.md`);
 }
 

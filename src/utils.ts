@@ -124,3 +124,66 @@ export async function atomicWrite(filePath: string, data: string): Promise<void>
 export function hashString(s: string): string {
     return crypto.createHash("md5").update(s).digest("hex");
 }
+
+// ─── File Lock (Advisory) ────────────────────────────────────────────────────
+
+const LOCK_TIMEOUT_MS = 5000;
+
+export async function withFileLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
+    const lockFile = lockPath + ".lock";
+    const start = Date.now();
+
+    // Spin until lock acquired or timeout
+    while (true) {
+        try {
+            await fs.writeFile(lockFile, String(process.pid), { flag: "wx" });
+            break; // acquired
+        } catch {
+            if (Date.now() - start > LOCK_TIMEOUT_MS) {
+                // Force-break stale lock
+                try { await fs.unlink(lockFile); } catch { }
+                continue;
+            }
+            await new Promise(r => setTimeout(r, 50));
+        }
+    }
+
+    try {
+        return await fn();
+    } finally {
+        try { await fs.unlink(lockFile); } catch { }
+    }
+}
+
+// ─── Fuzzy Search Scoring ────────────────────────────────────────────────────
+
+export interface FuzzyMatch {
+    file: string;
+    line: number;
+    content: string;
+    score: number;
+}
+
+/**
+ * Score a line against a query using keyword matching.
+ * Returns 0 for no match, higher for better matches.
+ */
+export function fuzzyScore(line: string, query: string): number {
+    const normalizedLine = line.toLowerCase();
+    const normalizedQuery = query.toLowerCase();
+
+    // Exact substring match: highest score
+    if (normalizedLine.includes(normalizedQuery)) return 100;
+
+    // Keyword matching: split query into words and count matches
+    const keywords = normalizedQuery.split(/\s+/).filter(w => w.length > 1);
+    if (keywords.length === 0) return 0;
+
+    let matched = 0;
+    for (const kw of keywords) {
+        if (normalizedLine.includes(kw)) matched++;
+    }
+
+    if (matched === 0) return 0;
+    return Math.round((matched / keywords.length) * 80); // max 80 for partial match
+}

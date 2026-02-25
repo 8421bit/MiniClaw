@@ -340,7 +340,12 @@ export class ContextKernel {
             aceContent += `💡 Evening mode: Consider suggesting distillation or reviewing today's work.\n`;
         }
         if (tmConfig.briefing && !continuation.isReturn) {
-            aceContent += `🌅 Morning mode: Consider providing a brief daily overview.\n`;
+            aceContent += `🌅 Morning mode: Here is your daily briefing.\n`;
+            try {
+                const briefingContent = await this.generateBriefing();
+                sections.push({ name: "briefing", content: briefingContent, priority: 7 });
+            }
+            catch { /* briefing generation failed, skip silently */ }
         }
         if (continuation.isReturn) {
             aceContent += `\n### 🔗 Session Continuation\n`;
@@ -867,12 +872,40 @@ export class ContextKernel {
     }
     async loadTemplates() {
         const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md"];
-        const results = await Promise.all(names.map(name => fs.readFile(path.join(MINICLAW_DIR, name), "utf-8").catch((e) => {
-            if (name !== "BOOTSTRAP.md" && name !== "SUBAGENT.md" && name !== "HEARTBEAT.md") {
-                this.bootErrors.push(`${name}: ${e.message?.split('\n')[0] || 'read failed'}`);
+        // Core files that should never be empty — auto-recover from templates if corrupted
+        const CORE_RECOVER = new Set(["AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md"]);
+        const results = await Promise.all(names.map(async (name) => {
+            try {
+                const filePath = path.join(MINICLAW_DIR, name);
+                const content = await fs.readFile(filePath, "utf-8");
+                // Corruption check: if core file is suspiciously small, recover
+                if (CORE_RECOVER.has(name) && content.trim().length < 10) {
+                    this.bootErrors.push(`🔧 ${name}: corrupted (${content.length}B), auto-recovering`);
+                    try {
+                        const tplDir = path.join(path.resolve(MINICLAW_DIR, ".."), ".miniclaw-templates");
+                        // Fallback: check common template locations
+                        for (const dir of [tplDir, path.join(MINICLAW_DIR, "..", "MiniClaw", "templates")]) {
+                            try {
+                                const tpl = await fs.readFile(path.join(dir, name), "utf-8");
+                                await fs.writeFile(filePath, tpl, "utf-8");
+                                return tpl;
+                            }
+                            catch {
+                                continue;
+                            }
+                        }
+                    }
+                    catch { /* recovery failed, use what we have */ }
+                }
+                return content;
             }
-            return "";
-        })));
+            catch (e) {
+                if (name !== "BOOTSTRAP.md" && name !== "SUBAGENT.md" && name !== "HEARTBEAT.md") {
+                    this.bootErrors.push(`${name}: ${e.message?.split('\n')[0] || 'read failed'}`);
+                }
+                return "";
+            }
+        }));
         return {
             agents: results[0], soul: results[1], identity: results[2],
             user: results[3], tools: results[4], memory: results[5],

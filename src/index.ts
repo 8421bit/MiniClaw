@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cron from "node-cron";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
+import { fuzzyScore, withFileLock } from "./utils.js";
 
 // Configuration
 const kernel = new ContextKernel();
@@ -379,6 +380,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
                 required: ["action"]
             }
+        },
+        {
+            name: "miniclaw_skill",
+            description: `【技能创建器 (Skill Creator)】创建、查看、删除可复用技能。
+
+## 操作：
+- create: 创建新技能（需要 name, description, content）
+- list: 查看所有已安装技能
+- delete: 删除技能（需要 name）
+
+技能保存在 ~/.miniclaw/skills/ 目录下。`,
+            inputSchema: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["create", "list", "delete"],
+                        description: "操作类型"
+                    },
+                    name: { type: "string", description: "技能名称（create/delete时需要）" },
+                    description: { type: "string", description: "技能描述（create时需要）" },
+                    content: { type: "string", description: "技能内容/指令（create时需要，Markdown 格式）" }
+                },
+                required: ["action"]
+            }
         }
     ];
 
@@ -513,11 +539,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             query: z.string(),
             bucket: z.enum(["all", "memory", "skills", "config"]).optional().default("all"),
         }).parse(args);
-        const regex = new RegExp(query, 'i');
 
-        const searchFiles = async (dir: string): Promise<string[]> => {
-            const results: string[] = [];
-            const entries = await fs.readdir(dir, { withFileTypes: true });
+        const searchFiles = async (dir: string): Promise<{ file: string; line: number; content: string; score: number }[]> => {
+            const results: { file: string; line: number; content: string; score: number }[] = [];
+            let entries;
+            try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return results; }
             for (const entry of entries) {
                 const fullPath = path.join(dir, entry.name);
                 if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
@@ -526,8 +552,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 } else if (entry.isFile() && (entry.name.endsWith('.md') || entry.name.endsWith('.json'))) {
                     try {
                         const content = await fs.readFile(fullPath, 'utf-8');
+                        const relPath = path.relative(MINICLAW_DIR, fullPath);
                         content.split('\n').forEach((line, i) => {
-                            if (regex.test(line)) results.push(`${path.relative(MINICLAW_DIR, fullPath)}:${i + 1}: ${line.trim()}`);
+                            const score = fuzzyScore(line, query);
+                            if (score > 0) {
+                                results.push({ file: relPath, line: i + 1, content: line.trim(), score });
+                            }
                         });
                     } catch { }
                 }
@@ -540,7 +570,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (bucket === "skills") searchDir = path.join(MINICLAW_DIR, "skills");
 
         const allMatches = await searchFiles(searchDir);
-        return { content: [{ type: "text", text: allMatches.slice(0, 50).join('\n') || "No matches found." }] };
+        // Sort by relevance score (highest first)
+        allMatches.sort((a, b) => b.score - a.score);
+        const formatted = allMatches.slice(0, 50).map(m =>
+            `[${m.score}] ${m.file}:${m.line}: ${m.content}`
+        );
+        return { content: [{ type: "text", text: formatted.join('\n') || "No matches found." }] };
     }
 
     // ★ Entity Memory Tool
@@ -681,6 +716,61 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         return { content: [{ type: "text", text: "Unknown jobs action." }] };
+    }
+
+    // ★ Skill Creator Tool
+    if (name === "miniclaw_skill") {
+        const { action, name: skillName, description: skillDesc, content: skillContent } = z.object({
+            action: z.enum(["create", "list", "delete"]),
+            name: z.string().optional(),
+            description: z.string().optional(),
+            content: z.string().optional(),
+        }).parse(args);
+
+        const skillsDir = path.join(MINICLAW_DIR, "skills");
+        await fs.mkdir(skillsDir, { recursive: true }).catch(() => { });
+
+        if (action === "list") {
+            try {
+                const entries = await fs.readdir(skillsDir, { withFileTypes: true });
+                const skills = entries.filter(e => e.isDirectory());
+                if (skills.length === 0) return { content: [{ type: "text", text: "📦 没有已安装的技能。使用 `create` 创建一个。" }] };
+                const lines = await Promise.all(skills.map(async (s) => {
+                    try {
+                        const skillMd = await fs.readFile(path.join(skillsDir, s.name, "SKILL.md"), "utf-8");
+                        const firstLine = skillMd.split('\n').find(l => l.startsWith('description:'));
+                        return `- **${s.name}** — ${firstLine ? firstLine.replace('description:', '').trim() : 'No description'}`;
+                    } catch { return `- **${s.name}**`; }
+                }));
+                return { content: [{ type: "text", text: `📦 已安装技能：\n\n${lines.join('\n')}` }] };
+            } catch {
+                return { content: [{ type: "text", text: "📦 skills 目录不存在。" }] };
+            }
+        }
+
+        if (action === "create") {
+            if (!skillName || !skillDesc || !skillContent) {
+                return { content: [{ type: "text", text: "❌ 创建技能需要 name, description, content 三个参数。" }] };
+            }
+            const skillDir = path.join(skillsDir, skillName);
+            await fs.mkdir(skillDir, { recursive: true });
+            const skillMd = `---\nname: ${skillName}\ndescription: ${skillDesc}\n---\n\n${skillContent}\n`;
+            await fs.writeFile(path.join(skillDir, "SKILL.md"), skillMd, "utf-8");
+            return { content: [{ type: "text", text: `✅ 技能 **${skillName}** 已创建！\n路径：\`~/.miniclaw/skills/${skillName}/SKILL.md\`` }] };
+        }
+
+        if (action === "delete") {
+            if (!skillName) return { content: [{ type: "text", text: "❌ 删除技能需要 name 参数。" }] };
+            const skillDir = path.join(skillsDir, skillName);
+            try {
+                await fs.rm(skillDir, { recursive: true });
+                return { content: [{ type: "text", text: `🗑️ 技能 **${skillName}** 已删除。` }] };
+            } catch {
+                return { content: [{ type: "text", text: `❌ 找不到技能: ${skillName}` }] };
+            }
+        }
+
+        return { content: [{ type: "text", text: "Unknown skill action." }] };
     }
 
     // Status

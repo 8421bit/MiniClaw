@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchCronField, cronMatchesNow, parseFrontmatter, hashString, getNowInTz } from "../src/utils.js";
+import { matchCronField, cronMatchesNow, parseFrontmatter, hashString, getNowInTz, fuzzyScore } from "../src/utils.js";
 
 // ─── Cron Field Matching ─────────────────────────────────────────────────────
 
@@ -164,5 +164,33 @@ describe("hashString", () => {
     it("should return a 32-char hex string", () => {
         const hash = hashString("test");
         expect(hash).toMatch(/^[a-f0-9]{32}$/);
+    });
+});
+
+// ─── Fuzzy Search Scoring ────────────────────────────────────────────────────
+
+describe("fuzzyScore", () => {
+    it("should return 100 for exact substring match", () => {
+        expect(fuzzyScore("This is a test line", "test line")).toBe(100);
+    });
+
+    it("should return partial score for keyword matches", () => {
+        const score = fuzzyScore("Discussion about MiniClaw project architecture", "miniclaw architecture");
+        expect(score).toBeGreaterThan(0);
+        expect(score).toBeLessThanOrEqual(80);
+    });
+
+    it("should return 0 for no match", () => {
+        expect(fuzzyScore("Hello world", "quantum physics")).toBe(0);
+    });
+
+    it("should be case-insensitive", () => {
+        expect(fuzzyScore("HELLO WORLD", "hello world")).toBe(100);
+    });
+
+    it("should handle single keyword partial match", () => {
+        const score = fuzzyScore("Working on the scheduler today", "scheduler testing");
+        expect(score).toBeGreaterThan(0); // "scheduler" matches
+        expect(score).toBeLessThan(100);  // "testing" doesn't match
     });
 });
