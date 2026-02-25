@@ -463,6 +463,14 @@ export class ContextKernel {
                 priority: 4,
             });
         }
+        // Priority 4: Lifecycle Hooks (onBoot)
+        try {
+            const hookResults = await this.runSkillHooks("onBoot");
+            if (hookResults.length > 0) {
+                sections.push({ name: "hooks_onBoot", content: `## ⚡ Skill Hooks (onBoot)\n${hookResults.join('\n')}\n`, priority: 4 });
+            }
+        }
+        catch { /* hooks should never break boot */ }
         // Priority 3: Daily log
         if (memoryStatus.todayContent) {
             sections.push({
@@ -598,6 +606,37 @@ export class ContextKernel {
         catch (e) {
             return `Skill execution failed: ${e.message}\nOutput: ${e.stdout || e.stderr}`;
         }
+    }
+    // === LIFECYCLE HOOKS ===
+    // Skills can declare hooks via metadata.hooks: "onBoot,onHeartbeat,onMemoryWrite"
+    // When an event fires, all matching skills with exec scripts are run.
+    async runSkillHooks(event) {
+        const skills = await this.skillCache.getAll();
+        const results = [];
+        for (const [name, skill] of skills) {
+            const hooks = getSkillMeta(skill.frontmatter, 'hooks');
+            if (!hooks)
+                continue;
+            // Parse hooks: string "onBoot,onHeartbeat" or array ["onBoot","onHeartbeat"]
+            const hookList = Array.isArray(hooks) ? hooks : String(hooks).split(',').map(h => h.trim());
+            if (!hookList.includes(event))
+                continue;
+            const execScript = getSkillMeta(skill.frontmatter, 'exec');
+            if (typeof execScript === 'string') {
+                try {
+                    const output = await this.executeSkillScript(name, execScript);
+                    if (output.trim())
+                        results.push(`[${name}] ${output.trim()}`);
+                    this.state.analytics.skillUsage[name] = (this.state.analytics.skillUsage[name] || 0) + 1;
+                }
+                catch (e) {
+                    results.push(`[${name}] hook error: ${e.message}`);
+                }
+            }
+        }
+        if (results.length > 0)
+            await this.saveState();
+        return results;
     }
     // === WORKSPACE: Auto-Detection ===
     async detectWorkspace() {

@@ -60,6 +60,10 @@ async function executeHeartbeat(): Promise<void> {
         }
 
         await kernel.updateHeartbeatState({ lastHeartbeat: new Date().toISOString() });
+
+        // Fire onHeartbeat skill hooks
+        try { await kernel.runSkillHooks("onHeartbeat"); } catch { }
+
         console.error(`[MiniClaw] Heartbeat completed.`);
 
         // Auto-archive trigger: warn when daily log exceeds 50KB
@@ -506,6 +510,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 lastDistill: new Date().toISOString(),
             });
         }
+
+        // Fire onMemoryWrite skill hooks
+        try { await kernel.runSkillHooks("onMemoryWrite"); } catch { }
+
         return { content: [{ type: "text", text: `Updated ${filename}.` }] };
     }
 
