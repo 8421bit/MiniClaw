@@ -282,7 +282,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_status",
-            description: `【系统诊断工具 (Status)】返回 MiniClaw 0.5 完整状态，包括系统、分析、实体、健康检查。`,
+            description: `【系统诊断工具 (Status)】返回 MiniClaw 0.6 完整状态，包括系统、分析、实体、健康检查。`,
             inputSchema: { type: "object", properties: {} }
         },
         {
@@ -808,7 +808,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const avgBoot = analytics.bootCount > 0 ? Math.round(analytics.totalBootMs / analytics.bootCount) : 0;
 
         const report = [
-            `=== 🧠 MiniClaw 0.5 "The Nervous System" ===`,
+            `=== 🧠 MiniClaw 0.6 "The Nervous System" ===`,
             ``,
             `## System`,
             `Version: ${pkgJson.version}`,
