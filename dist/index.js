@@ -393,6 +393,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
                 required: ["action"]
             }
+        },
+        {
+            name: "miniclaw_stash",
+            description: `【跨会话状态快照 (Session Stash)】
+用于在不同会话之间（或 MCP 客户端重启后）暂存和恢复关键上下文状态。
+存入 Stash 的内容会在每次新对话开始时，作为最高优先级注入给 AI。
+
+## 操作：
+- list: 查看当前暂存堆栈的内容
+- save: 保存键值对到暂存区（如果 key 存在则覆盖）
+- load: 读取暂存区中指定 key 的值
+- clear: 清空暂存堆栈
+
+使用场景：下班前暂存当前的调试思路、关键文件路径，或者暂存需要跨多步任务共享的 JSON 配置块。`,
+            inputSchema: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["save", "load", "list", "clear"],
+                        description: "操作类型"
+                    },
+                    key: { type: "string", description: "数据的键名 (save/load时需要)" },
+                    value: { description: "保存的数据 (任意 JSON 类型) (save时需要)" }
+                },
+                required: ["action"]
+            }
         }
     ];
     const skillTools = await kernel.discoverSkillTools();
@@ -518,6 +545,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         catch {
             return { content: [{ type: "text", text: `No log found to archive.` }] };
+        }
+    }
+    if (name === "miniclaw_stash") {
+        const { action, key, value } = z.object({
+            action: z.enum(["save", "load", "list", "clear"]),
+            key: z.string().optional(),
+            value: z.any().optional()
+        }).parse(args);
+        if (action === "clear") {
+            await kernel.clearStash();
+            return { content: [{ type: "text", text: `Stash cleared.` }] };
+        }
+        const currentStashStr = await kernel.readStash();
+        let stashData = {};
+        if (currentStashStr) {
+            try {
+                stashData = JSON.parse(currentStashStr);
+            }
+            catch { }
+        }
+        if (action === "list") {
+            const keys = Object.keys(stashData);
+            if (keys.length === 0)
+                return { content: [{ type: "text", text: `Stash is empty.` }] };
+            return { content: [{ type: "text", text: `Current Stash:\n\`\`\`json\n${JSON.stringify(stashData, null, 2)}\n\`\`\`` }] };
+        }
+        if (action === "load") {
+            if (!key)
+                throw new Error("Key is required for load action.");
+            if (!(key in stashData))
+                return { content: [{ type: "text", text: `Key '${key}' not found in stash.` }] };
+            return { content: [{ type: "text", text: JSON.stringify(stashData[key], null, 2) }] };
+        }
+        if (action === "save") {
+            if (!key)
+                throw new Error("Key is required for save action.");
+            if (value === undefined)
+                throw new Error("Value is required for save action.");
+            stashData[key] = value;
+            await kernel.writeStash(stashData);
+            return { content: [{ type: "text", text: `Saved to stash under key: ${key}` }] };
         }
     }
     if (name === "miniclaw_search") {
