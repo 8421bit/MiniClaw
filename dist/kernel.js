@@ -11,6 +11,7 @@ export const MINICLAW_DIR = path.join(HOME_DIR, ".miniclaw");
 const SKILLS_DIR = path.join(MINICLAW_DIR, "skills");
 const MEMORY_DIR = path.join(MINICLAW_DIR, "memory");
 const STATE_FILE = path.join(MINICLAW_DIR, "state.json");
+const STASH_FILE = path.join(MINICLAW_DIR, "STASH.json");
 const ENTITIES_FILE = path.join(MINICLAW_DIR, "entities.json");
 // Context budget (configurable via env)
 const DEFAULT_TOKEN_BUDGET = parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
@@ -32,6 +33,7 @@ const DEFAULT_HEARTBEAT = {
     lastDistill: null,
     needsDistill: false,
     dailyLogBytes: 0,
+    needsSubconsciousReflex: false,
 };
 // === Skill Cache (Solves N+1 problem) ===
 class SkillCache {
@@ -308,11 +310,12 @@ export class ContextKernel {
         const tmConfig = TIME_MODES[timeMode];
         // ★ Parallel I/O: All scans independent
         // ADDED: detectWorkspace()
-        const [skillData, memoryStatus, templates, workspaceInfo] = await Promise.all([
+        const [skillData, memoryStatus, templates, workspaceInfo, hbState] = await Promise.all([
             this.skillCache.getAll(),
             this.scanMemory(),
             this.loadTemplates(),
             this.detectWorkspace(),
+            this.getHeartbeatState(),
         ]);
         const runtime = this.senseRuntime();
         // ★ ACE: Continuation detection
@@ -476,6 +479,14 @@ export class ContextKernel {
             sections.push({
                 name: "daily_log",
                 content: `\n---\n\n## 📅 DAILY LOG: ${memoryStatus.todayFile} (Pending Distillation)\n${memoryStatus.todayContent}\n`,
+                priority: 3,
+            });
+        }
+        // Priority 3: Subconscious Reflex Impulse
+        if (hbState.needsSubconsciousReflex) {
+            sections.push({
+                name: "subconscious_impulse",
+                content: `\n---\n\n## 🧠 SUBCONSCIOUS IMPULSE\n⚠️ SYSTEM: High repetitive usage detected for tool '${hbState.triggerTool}'.\nAction Required: Please run 'miniclaw_subconscious' to analyze and automate this repetitive task.\n`,
                 priority: 3,
             });
         }
@@ -1027,6 +1038,28 @@ export class ContextKernel {
             return { shouldDistill: true, reason: `log size ${dailyLogBytes}B (>8KB)`, urgency: 'low' };
         }
         return { shouldDistill: false, reason: 'ok', urgency: 'low' };
+    }
+    // === STASH API ===
+    async readStash() {
+        try {
+            const content = await fs.readFile(STASH_FILE, 'utf-8');
+            if (!content.trim() || content.trim() === '{}')
+                return null;
+            return content;
+        }
+        catch {
+            return null;
+        }
+    }
+    async writeStash(data) {
+        await fs.mkdir(MINICLAW_DIR, { recursive: true });
+        await fs.writeFile(STASH_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    }
+    async clearStash() {
+        try {
+            await fs.unlink(STASH_FILE);
+        }
+        catch { }
     }
     // === Private Parsers ===
     parseSkillPromptEntries(frontmatter, skillName) {

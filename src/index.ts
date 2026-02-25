@@ -793,6 +793,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const dir = path.join(skillsDir, sn);
             await fs.mkdir(dir, { recursive: true });
             await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${sn}\ndescription: ${sd}\n---\n\n${sc}\n`, "utf-8");
+
+            // Clear reflex flag if triggered
+            const hbState = await kernel.getHeartbeatState();
+            if (hbState.needsSubconsciousReflex) {
+                await kernel.updateHeartbeatState({ needsSubconsciousReflex: false, triggerTool: "" });
+            }
+
             return { content: [{ type: "text", text: `✅ 技能 **${sn}** 已创建！` }] };
         }
         if (action === "delete") {
