@@ -22,6 +22,12 @@ const TIME_MODES = {
     evening: { emoji: "🌙", label: "Evening", briefing: false, reflective: true, minimal: false },
     night: { emoji: "😴", label: "Night", briefing: false, reflective: false, minimal: true },
 };
+const DEFAULT_HEARTBEAT = {
+    lastHeartbeat: null,
+    lastDistill: null,
+    needsDistill: false,
+    dailyLogBytes: 0,
+};
 // === Skill Cache (Solves N+1 problem) ===
 class SkillCache {
     cache = new Map();
@@ -104,7 +110,7 @@ class EntityStore {
         this.loaded = true;
     }
     async save() {
-        await fs.writeFile(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2), "utf-8");
+        await atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2));
     }
     async add(entity) {
         await this.load();
@@ -225,7 +231,13 @@ function parseFrontmatter(content) {
 }
 // --- Utilities ---
 function hashString(s) {
-    return crypto.createHash('md5').update(s).digest('hex').slice(0, 8);
+    return crypto.createHash("md5").update(s).digest("hex");
+}
+/** Atomic write: write to .tmp then rename to prevent corruption on crash */
+async function atomicWrite(filePath, data) {
+    const tmp = filePath + ".tmp";
+    await fs.writeFile(tmp, data, "utf-8");
+    await fs.rename(tmp, filePath);
 }
 function getTimeMode(hour) {
     if (hour >= 6 && hour < 9)
@@ -252,6 +264,7 @@ export class ContextKernel {
             dailyDistillations: 0,
         },
         previousHashes: {},
+        heartbeat: { ...DEFAULT_HEARTBEAT },
     };
     stateLoaded = false;
     // --- State Persistence ---
@@ -265,14 +278,26 @@ export class ContextKernel {
                 this.state.analytics = { ...this.state.analytics, ...data.analytics };
             if (data.previousHashes)
                 this.state.previousHashes = data.previousHashes;
+            if (data.heartbeat)
+                this.state.heartbeat = { ...DEFAULT_HEARTBEAT, ...data.heartbeat };
         }
         catch { /* first run, use defaults */ }
         this.stateLoaded = true;
     }
     async saveState() {
-        await fs.writeFile(STATE_FILE, JSON.stringify(this.state, null, 2), "utf-8");
+        await atomicWrite(STATE_FILE, JSON.stringify(this.state, null, 2));
     }
     // --- Analytics API ---
+    // --- Heartbeat State API (unified state) ---
+    async getHeartbeatState() {
+        await this.loadState();
+        return { ...this.state.heartbeat };
+    }
+    async updateHeartbeatState(updates) {
+        await this.loadState();
+        Object.assign(this.state.heartbeat, updates);
+        await this.saveState();
+    }
     async trackTool(toolName) {
         await this.loadState();
         this.state.analytics.toolCalls[toolName] = (this.state.analytics.toolCalls[toolName] || 0) + 1;
@@ -567,9 +592,16 @@ export class ContextKernel {
             'npm', 'node', 'pnpm', 'yarn', 'cargo', 'go', 'python', 'python3', 'pip',
             'make', 'cmake', 'tree', 'du'
         ];
+        // P0 Fix #1: Always check basename to prevent /bin/rm bypass
         const firstToken = command.split(' ')[0];
-        if (!allowedCommands.includes(firstToken) && !firstToken.includes('/')) {
-            throw new Error(`Command '${firstToken}' is not in the allowed whitelist.`);
+        const basename = path.basename(firstToken);
+        if (!allowedCommands.includes(basename)) {
+            throw new Error(`Command '${basename}' is not in the allowed whitelist.`);
+        }
+        // P0 Fix #2: Block shell metacharacters to prevent injection
+        const dangerousChars = /[;|&`$(){}\\<>!\n]/;
+        if (dangerousChars.test(command)) {
+            throw new Error(`Command contains disallowed shell metacharacters.`);
         }
         try {
             const { stdout, stderr } = await execAsync(command, {

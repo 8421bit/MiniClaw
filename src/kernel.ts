@@ -125,10 +125,25 @@ export interface Analytics {
 }
 
 // --- Persistent State ---
+interface HeartbeatState {
+    lastHeartbeat: string | null;
+    lastDistill: string | null;
+    needsDistill: boolean;
+    dailyLogBytes: number;
+}
+
 interface MiniClawState {
     analytics: Analytics;
     previousHashes: ContentHashes;
+    heartbeat: HeartbeatState;
 }
+
+const DEFAULT_HEARTBEAT: HeartbeatState = {
+    lastHeartbeat: null,
+    lastDistill: null,
+    needsDistill: false,
+    dailyLogBytes: 0,
+};
 
 // === Skill Cache (Solves N+1 problem) ===
 
@@ -212,7 +227,7 @@ class EntityStore {
     }
 
     async save(): Promise<void> {
-        await fs.writeFile(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2), "utf-8");
+        await atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2));
     }
 
     async add(entity: Omit<Entity, "firstMentioned" | "lastMentioned" | "mentionCount">): Promise<Entity> {
@@ -334,7 +349,14 @@ function parseFrontmatter(content: string): Record<string, unknown> {
 
 // --- Utilities ---
 function hashString(s: string): string {
-    return crypto.createHash('md5').update(s).digest('hex').slice(0, 8);
+    return crypto.createHash("md5").update(s).digest("hex");
+}
+
+/** Atomic write: write to .tmp then rename to prevent corruption on crash */
+async function atomicWrite(filePath: string, data: string): Promise<void> {
+    const tmp = filePath + ".tmp";
+    await fs.writeFile(tmp, data, "utf-8");
+    await fs.rename(tmp, filePath);
 }
 
 function getTimeMode(hour: number): TimeMode {
@@ -359,6 +381,7 @@ export class ContextKernel {
             dailyDistillations: 0,
         },
         previousHashes: {},
+        heartbeat: { ...DEFAULT_HEARTBEAT },
     };
     private stateLoaded = false;
 
@@ -371,15 +394,29 @@ export class ContextKernel {
             const data = JSON.parse(raw);
             if (data.analytics) this.state.analytics = { ...this.state.analytics, ...data.analytics };
             if (data.previousHashes) this.state.previousHashes = data.previousHashes;
+            if (data.heartbeat) this.state.heartbeat = { ...DEFAULT_HEARTBEAT, ...data.heartbeat };
         } catch { /* first run, use defaults */ }
         this.stateLoaded = true;
     }
 
     private async saveState(): Promise<void> {
-        await fs.writeFile(STATE_FILE, JSON.stringify(this.state, null, 2), "utf-8");
+        await atomicWrite(STATE_FILE, JSON.stringify(this.state, null, 2));
     }
 
     // --- Analytics API ---
+
+    // --- Heartbeat State API (unified state) ---
+
+    async getHeartbeatState(): Promise<HeartbeatState> {
+        await this.loadState();
+        return { ...this.state.heartbeat };
+    }
+
+    async updateHeartbeatState(updates: Partial<HeartbeatState>): Promise<void> {
+        await this.loadState();
+        Object.assign(this.state.heartbeat, updates);
+        await this.saveState();
+    }
 
     async trackTool(toolName: string): Promise<void> {
         await this.loadState();
@@ -710,9 +747,17 @@ export class ContextKernel {
             'make', 'cmake', 'tree', 'du'
         ];
 
+        // P0 Fix #1: Always check basename to prevent /bin/rm bypass
         const firstToken = command.split(' ')[0];
-        if (!allowedCommands.includes(firstToken) && !firstToken.includes('/')) {
-            throw new Error(`Command '${firstToken}' is not in the allowed whitelist.`);
+        const basename = path.basename(firstToken);
+        if (!allowedCommands.includes(basename)) {
+            throw new Error(`Command '${basename}' is not in the allowed whitelist.`);
+        }
+
+        // P0 Fix #2: Block shell metacharacters to prevent injection
+        const dangerousChars = /[;|&`$(){}\\<>!\n]/;
+        if (dangerousChars.test(command)) {
+            throw new Error(`Command contains disallowed shell metacharacters.`);
         }
 
         try {

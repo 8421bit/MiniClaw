@@ -118,6 +118,18 @@ function cronMatchesNow(expr: string, now: Date): boolean {
     );
 }
 
+/** Convert current time to a specific timezone using Intl API */
+function getNowInTz(tz?: string): Date {
+    if (!tz) return new Date();
+    try {
+        const str = new Date().toLocaleString("en-US", { timeZone: tz });
+        return new Date(str);
+    } catch {
+        console.error(`[Scheduler] Invalid timezone "${tz}", falling back to local time`);
+        return new Date();
+    }
+}
+
 // ─── State Management ────────────────────────────────────────────────────────
 
 async function loadState(): Promise<SchedulerState> {
@@ -177,8 +189,9 @@ async function main(): Promise<void> {
         // Deduplicate: skip if already ran this minute
         if (state.lastRuns[job.id] === currentMinuteKey) continue;
 
-        // Match cron expression against current time
-        if (cronMatchesNow(job.schedule.expr, now)) {
+        // Match cron expression against current time (timezone-aware)
+        const jobNow = getNowInTz(job.schedule.tz);
+        if (cronMatchesNow(job.schedule.expr, jobNow)) {
             await injectHeartbeat(job, now);
             state.lastRuns[job.id] = currentMinuteKey;
             triggered++;

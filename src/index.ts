@@ -22,37 +22,6 @@ import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
 // Configuration
 const kernel = new ContextKernel();
 
-// Legacy state for backward compat with heartbeat/distill flags
-interface LegacyState {
-    lastHeartbeat: string | null;
-    lastDistill: string | null;
-    needsDistill: boolean;
-    dailyLogBytes: number;
-}
-
-const DEFAULT_LEGACY_STATE: LegacyState = {
-    lastHeartbeat: null,
-    lastDistill: null,
-    needsDistill: false,
-    dailyLogBytes: 0,
-};
-
-const LEGACY_STATE_FILE = path.join(MINICLAW_DIR, "heartbeat_state.json");
-
-async function loadLegacyState(): Promise<LegacyState> {
-    try {
-        const content = await fs.readFile(LEGACY_STATE_FILE, "utf-8");
-        return { ...DEFAULT_LEGACY_STATE, ...JSON.parse(content) };
-    } catch {
-        return { ...DEFAULT_LEGACY_STATE };
-    }
-}
-
-async function saveLegacyState(state: LegacyState): Promise<void> {
-    await fs.mkdir(MINICLAW_DIR, { recursive: true }).catch(() => { });
-    await fs.writeFile(LEGACY_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
-}
-
 // Ensure miniclaw dir exists
 async function ensureDir() {
     try { await fs.access(MINICLAW_DIR); }
@@ -69,25 +38,28 @@ async function isInitialized() {
 
 async function executeHeartbeat(): Promise<void> {
     try {
-        const state = await loadLegacyState();
+        const hbState = await kernel.getHeartbeatState();
         const today = new Date().toISOString().split('T')[0];
         const dailyLogPath = path.join(MINICLAW_DIR, "memory", `${today}.md`);
 
         try {
             const stats = await fs.stat(dailyLogPath);
-            state.dailyLogBytes = stats.size;
             const evaluation = await kernel.evaluateDistillation(stats.size);
-            if (evaluation.shouldDistill && !state.needsDistill) {
-                state.needsDistill = true;
+            if (evaluation.shouldDistill && !hbState.needsDistill) {
+                await kernel.updateHeartbeatState({
+                    needsDistill: true,
+                    dailyLogBytes: stats.size,
+                });
                 console.error(`[MiniClaw] Distillation needed (${evaluation.urgency}): ${evaluation.reason}`);
+            } else {
+                await kernel.updateHeartbeatState({ dailyLogBytes: stats.size });
             }
         } catch {
-            state.dailyLogBytes = 0;
+            await kernel.updateHeartbeatState({ dailyLogBytes: 0 });
         }
 
-        state.lastHeartbeat = new Date().toISOString();
-        await saveLegacyState(state);
-        console.error(`[MiniClaw] Heartbeat completed: ${state.lastHeartbeat}`);
+        await kernel.updateHeartbeatState({ lastHeartbeat: new Date().toISOString() });
+        console.error(`[MiniClaw] Heartbeat completed.`);
     } catch (err) {
         console.error(`[MiniClaw] Heartbeat error: ${err}`);
     }
@@ -97,11 +69,15 @@ function initScheduler() {
     cron.schedule('*/30 * * * *', async () => { await executeHeartbeat(); });
     console.error('[MiniClaw] Internal scheduler started (heartbeat: every 30 min)');
 }
+// Read version from package.json dynamically
+const __filename2 = fileURLToPath(import.meta.url);
+const __dirname2 = path.dirname(__filename2);
+const pkgJson = JSON.parse(await fs.readFile(path.join(__dirname2, "..", "package.json"), "utf-8").catch(() => '{"version":"0.0.0"}'));
 
 const server = new Server(
     {
         name: "miniclaw",
-        version: "0.5.0", // Bumped for Nervous System
+        version: pkgJson.version,
     },
     {
         capabilities: {
@@ -437,8 +413,8 @@ async function getContextContent(mode: "full" | "minimal" = "full") {
     let context = await kernel.boot({ type: mode });
 
     // Evolution Trigger
-    const state = await loadLegacyState();
-    if (state.needsDistill) {
+    const hbState = await kernel.getHeartbeatState();
+    if (hbState.needsDistill) {
         context += `\n\n!!! SYSTEM OVERRIDE: Memory buffer full. You MUST run \`miniclaw_growup\` immediately !!!\n`;
     }
 
@@ -466,10 +442,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await fs.writeFile(p, content, "utf-8");
 
         if (filename === "MEMORY.md") {
-            const state = await loadLegacyState();
-            state.needsDistill = false;
-            state.lastDistill = new Date().toISOString();
-            await saveLegacyState(state);
+            await kernel.updateHeartbeatState({
+                needsDistill: false,
+                lastDistill: new Date().toISOString(),
+            });
         }
         return { content: [{ type: "text", text: `Updated ${filename}.` }] };
     }
@@ -608,7 +584,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // Status
     if (name === "miniclaw_status") {
-        const legacyState = await loadLegacyState();
+        const hbState = await kernel.getHeartbeatState();
         const analytics = await kernel.getAnalytics();
 
         // File sizes
@@ -644,11 +620,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `=== 🧠 MiniClaw 0.5 "The Nervous System" ===`,
             ``,
             `## System`,
-            `Version: 0.5.0`,
+            `Version: ${pkgJson.version}`,
             `Boot count: ${analytics.bootCount} | Avg boot: ${avgBoot}ms`,
-            `Last heartbeat: ${legacyState.lastHeartbeat || 'never'}`,
-            `Last distill: ${legacyState.lastDistill || 'never'}`,
-            `Needs distill: ${legacyState.needsDistill}`,
+            `Last heartbeat: ${hbState.lastHeartbeat || 'never'}`,
+            `Last distill: ${hbState.lastDistill || 'never'}`,
+            `Needs distill: ${hbState.needsDistill}`,
             `Last activity: ${analytics.lastActivity || 'never'}`,
             ``,
             `## Analytics`,
@@ -657,7 +633,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             ``,
             `## Storage`,
             `Skills: ${skillCount} | Entities: ${entityCount} | Archived: ${archivedCount}`,
-            `Daily log: ${legacyState.dailyLogBytes}B`,
+            `Daily log: ${hbState.dailyLogBytes}B`,
             `Core files:`,
             ...fileSizes,
         ].join('\n');

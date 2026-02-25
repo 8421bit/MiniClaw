@@ -22,3 +22,9 @@ Things like:
 Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
 
 Add whatever helps you do your job. This is your cheat sheet.
+
+## Tool Usage Notes
+
+Record gotchas, best parameters, and lessons learned here. Examples:
+- *(Tool X: parameter Y must be quoted when containing spaces)*
+- *(API Z: rate limit is 100/min, batch requests recommended)*
