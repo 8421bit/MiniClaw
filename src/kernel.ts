@@ -72,6 +72,12 @@ interface SkillCacheEntry {
     referenceFiles: string[];
 }
 
+/** Read skill extension field: metadata.{key} (protocol) → frontmatter.{key} (legacy) */
+function getSkillMeta(fm: Record<string, unknown>, key: string): unknown {
+    const meta = fm['metadata'] as Record<string, unknown> | undefined;
+    return meta?.[key] ?? fm[key];
+}
+
 // --- Content Hash State ---
 export interface ContentHashes {
     [sectionName: string]: string;
@@ -550,7 +556,7 @@ export class ContextKernel {
                 const freq = count ? ` (used ${count}x)` : '';
                 const desc = skill.description || "";
                 // Mark executable skills
-                const execBadge = skill.frontmatter['exec'] ? ` [⚡EXEC]` : ``;
+                const execBadge = getSkillMeta(skill.frontmatter, 'exec') ? ` [⚡EXEC]` : ``;
                 return `- [${name}]${execBadge}: ${desc}${freq}`;
             });
 
@@ -564,8 +570,9 @@ export class ContextKernel {
             // Skill context hooks
             const hookSections: string[] = [];
             for (const [, skill] of skillData) {
-                if (typeof skill.frontmatter['context'] === 'string' && skill.frontmatter['context'].trim()) {
-                    hookSections.push(`### ${skill.name}\n${skill.frontmatter['context']}`);
+                const ctx = getSkillMeta(skill.frontmatter, 'context');
+                if (typeof ctx === 'string' && ctx.trim()) {
+                    hookSections.push(`### ${skill.name}\n${ctx}`);
                 }
             }
             if (hookSections.length > 0) {
@@ -1183,7 +1190,7 @@ export class ContextKernel {
 
     private parseSkillPromptEntries(frontmatter: Record<string, unknown>, skillName: string): SkillPromptDeclaration[] {
         const prompts: SkillPromptDeclaration[] = [];
-        const raw = frontmatter['prompts'];
+        const raw = getSkillMeta(frontmatter, 'prompts');
         if (Array.isArray(raw)) {
             for (const item of raw) {
                 if (typeof item === 'string') {
@@ -1205,8 +1212,9 @@ export class ContextKernel {
 
     private parseSkillToolEntries(frontmatter: Record<string, unknown>, skillName: string): SkillToolDeclaration[] {
         const tools: SkillToolDeclaration[] = [];
-        const raw = frontmatter['tools'];
-        const execScript = typeof frontmatter['exec'] === 'string' ? frontmatter['exec'] : undefined; // Check for exec script
+        const raw = getSkillMeta(frontmatter, 'tools');
+        const execVal = getSkillMeta(frontmatter, 'exec');
+        const execScript = typeof execVal === 'string' ? execVal : undefined;
 
         if (Array.isArray(raw)) {
             for (const item of raw) {
