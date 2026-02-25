@@ -262,34 +262,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
         },
         {
-            name: "miniclaw_search",
-            description: `【本能：深层回忆 (Deep Recall)】
-在长期记忆库和归档日志中搜索细节。
-
-## 适用场景：
-- miniclaw_read (短期回忆) 没能提供足够的细节
-- 用户问具体的过去细节："上次那个报错代码是什么？"、"三个月前那个项目叫什么？"
-- 需要查找具体的配置或代码片段
-- "Deep search" your own memory banks.`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    query: { type: "string", description: "关键词或正则" },
-                    bucket: {
-                        type: "string",
-                        enum: ["all", "memory", "skills", "config"],
-                        description: "搜索区域"
-                    }
-                },
-                required: ["query"]
-            }
-        },
-        {
-            name: "miniclaw_status",
-            description: `【系统诊断工具 (Status)】返回 MiniClaw 0.6 完整状态，包括系统、分析、实体、健康检查。`,
-            inputSchema: { type: "object", properties: {} }
-        },
-        {
             name: "miniclaw_entity",
             description: `【本能：概念连接 (Concept Linking)】
 构建你脑中的知识图谱。
@@ -360,32 +332,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
         },
         {
-            name: "miniclaw_jobs",
-            description: `【定时任务管理 (Jobs)】管理 Cron 定时任务（jobs.json）。
-
-## 操作：
-- list: 查看所有定时任务
-- add: 添加新任务（需要 name, cron, text）
-- remove: 删除任务（需要 id）
-- toggle: 启用/禁用任务（需要 id）`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    action: {
-                        type: "string",
-                        enum: ["list", "add", "remove", "toggle"],
-                        description: "操作类型"
-                    },
-                    id: { type: "string", description: "任务ID（remove/toggle时需要）" },
-                    name: { type: "string", description: "任务名称（add时需要）" },
-                    cron: { type: "string", description: "Cron 表达式，如 '0 21 * * *'（add时需要）" },
-                    text: { type: "string", description: "任务内容/提示词（add时需要）" },
-                    tz: { type: "string", description: "时区，如 'Asia/Shanghai'（add时可选）" }
-                },
-                required: ["action"]
-            }
-        },
-        {
             name: "miniclaw_skill",
             description: `【技能创建器 (Skill Creator)】创建、查看、删除可复用技能。
 
@@ -406,33 +352,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     name: { type: "string", description: "技能名称（create/delete时需要）" },
                     description: { type: "string", description: "技能描述（create时需要）" },
                     content: { type: "string", description: "技能内容/指令（create时需要，Markdown 格式）" }
-                },
-                required: ["action"]
-            }
-        },
-        {
-            name: "miniclaw_stash",
-            description: `【跨会话状态快照 (Session Stash)】
-用于在不同会话之间（或 MCP 客户端重启后）暂存和恢复关键上下文状态。
-存入 Stash 的内容会在每次新对话开始时，作为最高优先级注入给 AI。
-
-## 操作：
-- list: 查看当前暂存堆栈的内容
-- save: 保存键值对到暂存区（如果 key 存在则覆盖）
-- load: 读取暂存区中指定 key 的值
-- clear: 清空暂存堆栈
-
-使用场景：下班前暂存当前的调试思路、关键文件路径，或者暂存需要跨多步任务共享的 JSON 配置块。`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    action: {
-                        type: "string",
-                        enum: ["save", "load", "list", "clear"],
-                        description: "操作类型"
-                    },
-                    key: { type: "string", description: "数据的键名 (save/load时需要)" },
-                    value: { description: "保存的数据 (任意 JSON 类型) (save时需要)" }
                 },
                 required: ["action"]
             }
@@ -480,6 +399,14 @@ async function bootstrapMiniClaw(): Promise<void> {
                     await fs.copyFile(path.join(templatesDir, file), path.join(MINICLAW_DIR, file));
                 }
             }
+
+            // Install built-in system skills
+            try {
+                await fs.cp(path.join(templatesDir, "skills"), path.join(MINICLAW_DIR, "skills"), { recursive: true });
+            } catch (e) {
+                console.error(`[MiniClaw] Failed to install built-in skills: ${e}`);
+            }
+
             console.error(`[MiniClaw] Bootstrap complete: created ${MINICLAW_DIR} with templates.`);
         } catch (e) {
             console.error(`[MiniClaw] Bootstrap failed: ${e}`);
@@ -496,6 +423,16 @@ async function bootstrapMiniClaw(): Promise<void> {
                 try { await fs.copyFile(src, dest); } catch { }
             }
         }
+
+        // Migration: Install system skills for existing 0.6.x users
+        try {
+            const sysSearchPath = path.join(MINICLAW_DIR, "skills", "sys_search");
+            try { await fs.access(sysSearchPath); }
+            catch {
+                console.error(`[MiniClaw] Migration: Installing new built-in system skills...`);
+                await fs.cp(path.join(templatesDir, "skills"), path.join(MINICLAW_DIR, "skills"), { recursive: true, force: false });
+            }
+        } catch { }
     }
 }
 
@@ -569,89 +506,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
     }
 
-    if (name === "miniclaw_stash") {
-        const { action, key, value } = z.object({
-            action: z.enum(["save", "load", "list", "clear"]),
-            key: z.string().optional(),
-            value: z.any().optional()
-        }).parse(args);
-
-        if (action === "clear") {
-            await kernel.clearStash();
-            return { content: [{ type: "text", text: `Stash cleared.` }] };
-        }
-
-        const currentStashStr = await kernel.readStash();
-        let stashData: Record<string, any> = {};
-        if (currentStashStr) {
-            try { stashData = JSON.parse(currentStashStr); } catch { }
-        }
-
-        if (action === "list") {
-            const keys = Object.keys(stashData);
-            if (keys.length === 0) return { content: [{ type: "text", text: `Stash is empty.` }] };
-            return { content: [{ type: "text", text: `Current Stash:\n\`\`\`json\n${JSON.stringify(stashData, null, 2)}\n\`\`\`` }] };
-        }
-
-        if (action === "load") {
-            if (!key) throw new Error("Key is required for load action.");
-            if (!(key in stashData)) return { content: [{ type: "text", text: `Key '${key}' not found in stash.` }] };
-            return { content: [{ type: "text", text: JSON.stringify(stashData[key], null, 2) }] };
-        }
-
-        if (action === "save") {
-            if (!key) throw new Error("Key is required for save action.");
-            if (value === undefined) throw new Error("Value is required for save action.");
-            stashData[key] = value;
-            await kernel.writeStash(stashData);
-            return { content: [{ type: "text", text: `Saved to stash under key: ${key}` }] };
-        }
-    }
-
-    if (name === "miniclaw_search") {
-        const { query, bucket } = z.object({
-            query: z.string(),
-            bucket: z.enum(["all", "memory", "skills", "config"]).optional().default("all"),
-        }).parse(args);
-
-        const searchFiles = async (dir: string): Promise<{ file: string; line: number; content: string; score: number }[]> => {
-            const results: { file: string; line: number; content: string; score: number }[] = [];
-            let entries;
-            try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return results; }
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-                if (entry.isDirectory()) {
-                    results.push(...await searchFiles(fullPath));
-                } else if (entry.isFile() && (entry.name.endsWith('.md') || entry.name.endsWith('.json'))) {
-                    try {
-                        const content = await fs.readFile(fullPath, 'utf-8');
-                        const relPath = path.relative(MINICLAW_DIR, fullPath);
-                        content.split('\n').forEach((line, i) => {
-                            const score = fuzzyScore(line, query);
-                            if (score > 0) {
-                                results.push({ file: relPath, line: i + 1, content: line.trim(), score });
-                            }
-                        });
-                    } catch { }
-                }
-            }
-            return results;
-        };
-
-        let searchDir = MINICLAW_DIR;
-        if (bucket === "memory") searchDir = path.join(MINICLAW_DIR, "memory");
-        if (bucket === "skills") searchDir = path.join(MINICLAW_DIR, "skills");
-
-        const allMatches = await searchFiles(searchDir);
-        // Sort by relevance score (highest first)
-        allMatches.sort((a, b) => b.score - a.score);
-        const formatted = allMatches.slice(0, 50).map(m =>
-            `[${m.score}] ${m.file}:${m.line}: ${m.content}`
-        );
-        return { content: [{ type: "text", text: formatted.join('\n') || "No matches found." }] };
-    }
-
     // ★ Entity Memory Tool
     if (name === "miniclaw_entity") {
         const { action, name: entityName, type: entityType, attributes, relation, filterType } = z.object({
@@ -723,47 +577,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: result.exitCode !== 0
         };
     }
-    // ★ Jobs CRUD Tool
-    if (name === "miniclaw_jobs") {
-        const { action, id, name: jobName, cron: cronExpr, text, tz } = z.object({
-            action: z.enum(["list", "add", "remove", "toggle"]),
-            id: z.string().optional(), name: z.string().optional(),
-            cron: z.string().optional(), text: z.string().optional(), tz: z.string().optional(),
-        }).parse(args);
-        const jobsFile = path.join(MINICLAW_DIR, "jobs.json");
-        let jobs: any[] = [];
-        try { jobs = JSON.parse(await fs.readFile(jobsFile, "utf-8")); if (!Array.isArray(jobs)) jobs = []; } catch { }
-
-        if (action === "list") {
-            if (!jobs.length) return { content: [{ type: "text", text: "📋 没有定时任务。" }] };
-            const lines = jobs.map((j, i) => `${i + 1}. ${j.enabled ? "✅" : "⏸️"} **${j.name}** — \`${j.schedule?.expr}\` ${j.schedule?.tz ? `(${j.schedule.tz})` : ""}\n   ID: \`${j.id}\``).join("\n\n");
-            return { content: [{ type: "text", text: `📋 定时任务列表：\n\n${lines}` }] };
-        }
-        if (action === "add") {
-            if (!jobName || !cronExpr || !text) return { content: [{ type: "text", text: "❌ 需要 name, cron, text。" }] };
-            const id = crypto.randomUUID();
-            jobs.push({ id, name: jobName, enabled: true, createdAtMs: Date.now(), updatedAtMs: Date.now(), schedule: { kind: "cron", expr: cronExpr, tz: tz || "Asia/Shanghai" }, payload: { kind: "systemEvent", text } });
-            await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
-            return { content: [{ type: "text", text: `✅ 已添加：**${jobName}** (${cronExpr}) ID: \`${id}\`` }] };
-        }
-        if (action === "remove") {
-            if (!id) return { content: [{ type: "text", text: "❌ 需要 id。" }] };
-            const idx = jobs.findIndex(j => j.id === id);
-            if (idx === -1) return { content: [{ type: "text", text: `❌ 找不到 ID: ${id}` }] };
-            const [removed] = jobs.splice(idx, 1);
-            await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
-            return { content: [{ type: "text", text: `🗑️ 已删除：**${removed.name}**` }] };
-        }
-        if (action === "toggle") {
-            if (!id) return { content: [{ type: "text", text: "❌ 需要 id。" }] };
-            const job = jobs.find(j => j.id === id);
-            if (!job) return { content: [{ type: "text", text: `❌ 找不到 ID: ${id}` }] };
-            job.enabled = !job.enabled; job.updatedAtMs = Date.now();
-            await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
-            return { content: [{ type: "text", text: `${job.enabled ? "✅" : "⏸️"} **${job.name}** 已${job.enabled ? "启用" : "禁用"}` }] };
-        }
-        return { content: [{ type: "text", text: "Unknown jobs action." }] };
-    }
 
     // ★ Skill Creator Tool
     if (name === "miniclaw_skill") {
@@ -808,65 +621,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             catch { return { content: [{ type: "text", text: `❌ 找不到: ${sn}` }] }; }
         }
         return { content: [{ type: "text", text: "Unknown skill action." }] };
-    }
-
-    // Status
-    if (name === "miniclaw_status") {
-        const hbState = await kernel.getHeartbeatState();
-        const analytics = await kernel.getAnalytics();
-
-        // File sizes
-        const fileSizes: string[] = [];
-        for (const f of coreFiles) {
-            try {
-                const s = await fs.stat(path.join(MINICLAW_DIR, f));
-                fileSizes.push(`  ${f}: ${s.size}B`);
-            } catch {
-                fileSizes.push(`  ${f}: MISSING`);
-            }
-        }
-
-        const skillCount = await kernel.getSkillCount();
-        const entityCount = await kernel.entityStore.getCount();
-
-        let archivedCount = 0;
-        try {
-            const archived = await fs.readdir(path.join(MINICLAW_DIR, "memory", "archived"));
-            archivedCount = archived.filter(f => f.endsWith('.md')).length;
-        } catch { }
-
-        // Top tools
-        const topTools = Object.entries(analytics.toolCalls)
-            .sort(([, a], [, b]) => b - a)
-            .slice(0, 5)
-            .map(([name, count]) => `${name}(${count})`)
-            .join(', ');
-
-        const avgBoot = analytics.bootCount > 0 ? Math.round(analytics.totalBootMs / analytics.bootCount) : 0;
-
-        const report = [
-            `=== 🧠 MiniClaw 0.6 "The Nervous System" ===`,
-            ``,
-            `## System`,
-            `Version: ${pkgJson.version}`,
-            `Boot count: ${analytics.bootCount} | Avg boot: ${avgBoot}ms`,
-            `Last heartbeat: ${hbState.lastHeartbeat || 'never'}`,
-            `Last distill: ${hbState.lastDistill || 'never'}`,
-            `Needs distill: ${hbState.needsDistill}`,
-            `Last activity: ${analytics.lastActivity || 'never'}`,
-            ``,
-            `## Analytics`,
-            `Top tools: ${topTools || 'none'}`,
-            `Distillations: ${analytics.dailyDistillations}`,
-            ``,
-            `## Storage`,
-            `Skills: ${skillCount} | Entities: ${entityCount} | Archived: ${archivedCount}`,
-            `Daily log: ${hbState.dailyLogBytes}B`,
-            `Core files:`,
-            ...fileSizes,
-        ].join('\n');
-
-        return { content: [{ type: "text", text: report }] };
     }
 
     // Dynamic: Skill-declared tools
