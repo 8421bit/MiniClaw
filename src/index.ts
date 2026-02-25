@@ -60,6 +60,13 @@ async function executeHeartbeat(): Promise<void> {
 
         await kernel.updateHeartbeatState({ lastHeartbeat: new Date().toISOString() });
         console.error(`[MiniClaw] Heartbeat completed.`);
+
+        // Auto-archive trigger: warn when daily log exceeds 50KB
+        const updatedHb = await kernel.getHeartbeatState();
+        if (updatedHb.dailyLogBytes > 50000 && !updatedHb.needsDistill) {
+            await kernel.updateHeartbeatState({ needsDistill: true });
+            console.error(`[MiniClaw] Auto-archive: daily log exceeds 50KB (${updatedHb.dailyLogBytes}B), flagging needsDistill.`);
+        }
     } catch (err) {
         console.error(`[MiniClaw] Heartbeat error: ${err}`);
     }
@@ -346,6 +353,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
                 required: ["command"]
             }
+        },
+        {
+            name: "miniclaw_jobs",
+            description: `【定时任务管理 (Jobs)】管理 Cron 定时任务（jobs.json）。
+
+## 操作：
+- list: 查看所有定时任务
+- add: 添加新任务（需要 name, cron, text）
+- remove: 删除任务（需要 id）
+- toggle: 启用/禁用任务（需要 id）`,
+            inputSchema: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["list", "add", "remove", "toggle"],
+                        description: "操作类型"
+                    },
+                    id: { type: "string", description: "任务ID（remove/toggle时需要）" },
+                    name: { type: "string", description: "任务名称（add时需要）" },
+                    cron: { type: "string", description: "Cron 表达式，如 '0 21 * * *'（add时需要）" },
+                    text: { type: "string", description: "任务内容/提示词（add时需要）" },
+                    tz: { type: "string", description: "时区，如 'Asia/Shanghai'（add时可选）" }
+                },
+                required: ["action"]
+            }
         }
     ];
 
@@ -580,6 +613,74 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [{ type: "text", text: result.output }],
             isError: result.exitCode !== 0
         };
+    }
+    // ★ Jobs CRUD Tool
+    if (name === "miniclaw_jobs") {
+        const { action, id, name: jobName, cron: cronExpr, text, tz } = z.object({
+            action: z.enum(["list", "add", "remove", "toggle"]),
+            id: z.string().optional(),
+            name: z.string().optional(),
+            cron: z.string().optional(),
+            text: z.string().optional(),
+            tz: z.string().optional(),
+        }).parse(args);
+
+        const jobsFile = path.join(MINICLAW_DIR, "jobs.json");
+
+        // Load jobs
+        let jobs: any[] = [];
+        try {
+            const raw = await fs.readFile(jobsFile, "utf-8");
+            jobs = JSON.parse(raw);
+            if (!Array.isArray(jobs)) jobs = [];
+        } catch { jobs = []; }
+
+        if (action === "list") {
+            if (jobs.length === 0) return { content: [{ type: "text", text: "📋 没有定时任务。使用 `add` 创建一个。" }] };
+            const lines = jobs.map((j, i) =>
+                `${i + 1}. ${j.enabled ? "✅" : "⏸️"} **${j.name}** — \`${j.schedule?.expr}\` ${j.schedule?.tz ? `(${j.schedule.tz})` : ""}\n   ID: \`${j.id}\`\n   ${j.payload?.text?.substring(0, 80)}${(j.payload?.text?.length || 0) > 80 ? "..." : ""}`
+            );
+            return { content: [{ type: "text", text: `📋 定时任务列表：\n\n${lines.join("\n\n")}` }] };
+        }
+
+        if (action === "add") {
+            if (!jobName || !cronExpr || !text) {
+                return { content: [{ type: "text", text: "❌ 添加任务需要 name, cron, text 三个参数。" }] };
+            }
+            const newJob = {
+                id: crypto.randomUUID(),
+                name: jobName,
+                enabled: true,
+                createdAtMs: Date.now(),
+                updatedAtMs: Date.now(),
+                schedule: { kind: "cron", expr: cronExpr, tz: tz || "Asia/Shanghai" },
+                payload: { kind: "systemEvent", text },
+            };
+            jobs.push(newJob);
+            await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
+            return { content: [{ type: "text", text: `✅ 已添加定时任务：**${jobName}** (${cronExpr})\nID: \`${newJob.id}\`` }] };
+        }
+
+        if (action === "remove") {
+            if (!id) return { content: [{ type: "text", text: "❌ 删除任务需要 id 参数。" }] };
+            const idx = jobs.findIndex(j => j.id === id);
+            if (idx === -1) return { content: [{ type: "text", text: `❌ 找不到任务 ID: ${id}` }] };
+            const removed = jobs.splice(idx, 1)[0];
+            await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
+            return { content: [{ type: "text", text: `🗑️ 已删除任务：**${removed.name}**` }] };
+        }
+
+        if (action === "toggle") {
+            if (!id) return { content: [{ type: "text", text: "❌ 切换任务需要 id 参数。" }] };
+            const job = jobs.find(j => j.id === id);
+            if (!job) return { content: [{ type: "text", text: `❌ 找不到任务 ID: ${id}` }] };
+            job.enabled = !job.enabled;
+            job.updatedAtMs = Date.now();
+            await fs.writeFile(jobsFile, JSON.stringify(jobs, null, 2), "utf-8");
+            return { content: [{ type: "text", text: `${job.enabled ? "✅" : "⏸️"} 任务 **${job.name}** 已${job.enabled ? "启用" : "禁用"}` }] };
+        }
+
+        return { content: [{ type: "text", text: "Unknown jobs action." }] };
     }
 
     // Status

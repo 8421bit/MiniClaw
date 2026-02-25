@@ -127,6 +127,43 @@ npm run build
 
 ---
 
+## ⏰ 定时任务 (Cron Scheduler)
+
+MiniClaw 支持通过 macOS/Linux 的 `crontab` 自动执行定时任务（如每日回顾、定时检查邮件等）。
+
+### 工作原理
+
+1. 系统 cron 每分钟运行调度脚本
+2. 脚本读取 `~/.miniclaw/jobs.json` 中的任务
+3. 匹配当前时间 → 将到期任务注入 `HEARTBEAT.md`
+4. 下次你与 Agent 对话时，Agent 会看到并执行这些指令
+
+### 配置步骤
+
+```bash
+# 1. 编辑 crontab
+crontab -e
+
+# 2. 添加以下行（每分钟检查一次）
+* * * * * /usr/local/bin/node /path/to/miniclaw/dist/scheduler.js >> /tmp/miniclaw-scheduler.log 2>&1
+```
+
+> **提示**：将 `/path/to/miniclaw` 替换为你的实际安装路径（如 `~/.npm/_npx/.../node_modules/miniclaw`）。
+
+### 管理定时任务
+
+使用 `miniclaw_jobs` 工具（在对话中直接操作）：
+
+```text
+"帮我添加一个定时任务：每天早上9点检查邮件"
+→ Agent 调用 miniclaw_jobs(action="add", name="每日邮件检查", cron="0 9 * * *", text="检查邮件...")
+
+"列出所有定时任务"
+→ Agent 调用 miniclaw_jobs(action="list")
+```
+
+---
+
 ## ❓ 常见问题 (FAQ)
 
 **Q: 我的数据存在哪里？**

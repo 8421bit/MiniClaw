@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import crypto from "node:crypto";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
 const execAsync = promisify(exec);
 // --- Configuration & Constants ---
 const HOME_DIR = process.env.HOME || process.cwd();
@@ -187,57 +187,6 @@ class EntityStore {
             .sort((a, b) => b.mentionCount - a.mentionCount)
             .slice(0, 5); // Max 5 surfaced entities
     }
-}
-// --- Frontmatter Parser ---
-function parseFrontmatter(content) {
-    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!match)
-        return {};
-    const result = {};
-    const lines = match[1].split('\n');
-    let currentKey = '';
-    let inArray = false;
-    let arrayItems = [];
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#'))
-            continue;
-        if (trimmed.startsWith('- ') && inArray) {
-            arrayItems.push(trimmed.slice(2).trim());
-            continue;
-        }
-        if (inArray && currentKey) {
-            result[currentKey] = arrayItems;
-            inArray = false;
-            arrayItems = [];
-        }
-        const kvMatch = trimmed.match(/^([\w-]+):\s*(.*)$/);
-        if (kvMatch) {
-            currentKey = kvMatch[1];
-            const value = kvMatch[2].trim().replace(/^['"]|['"]$/g, '');
-            if (!value) {
-                inArray = true;
-                arrayItems = [];
-            }
-            else {
-                result[currentKey] = value;
-            }
-        }
-    }
-    if (inArray && currentKey) {
-        result[currentKey] = arrayItems;
-    }
-    return result;
-}
-// --- Utilities ---
-function hashString(s) {
-    return crypto.createHash("md5").update(s).digest("hex");
-}
-/** Atomic write: write to .tmp then rename to prevent corruption on crash */
-async function atomicWrite(filePath, data) {
-    const tmp = filePath + ".tmp";
-    await fs.writeFile(tmp, data, "utf-8");
-    await fs.rename(tmp, filePath);
 }
 function getTimeMode(hour) {
     if (hour >= 6 && hour < 9)

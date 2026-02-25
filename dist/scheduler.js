@@ -13,87 +13,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { cronMatchesNow, getNowInTz } from "./utils.js";
 // ─── Paths ───────────────────────────────────────────────────────────────────
 const MINICLAW_DIR = path.join(os.homedir(), ".miniclaw");
 const JOBS_FILE = path.join(MINICLAW_DIR, "jobs.json");
 const HEARTBEAT_FILE = path.join(MINICLAW_DIR, "HEARTBEAT.md");
 const SCHEDULER_STATE = path.join(MINICLAW_DIR, "scheduler_state.json");
-// ─── Cron Expression Matcher ─────────────────────────────────────────────────
-// Handles: *, specific numbers, comma lists, ranges (e.g. 1-5), steps (e.g. */5)
-function matchCronField(fieldExpr, value, max) {
-    if (fieldExpr === "*")
-        return true;
-    const parts = fieldExpr.split(",");
-    for (const part of parts) {
-        // Handle step: */5 or 1-10/2
-        if (part.includes("/")) {
-            const [rangeStr, stepStr] = part.split("/");
-            const step = parseInt(stepStr, 10);
-            if (isNaN(step) || step <= 0)
-                continue;
-            let start = 0;
-            let end = max;
-            if (rangeStr !== "*") {
-                if (rangeStr.includes("-")) {
-                    const [s, e] = rangeStr.split("-").map(Number);
-                    start = s;
-                    end = e;
-                }
-                else {
-                    start = parseInt(rangeStr, 10);
-                    end = max;
-                }
-            }
-            for (let i = start; i <= end; i += step) {
-                if (i === value)
-                    return true;
-            }
-            continue;
-        }
-        // Handle range: 1-5
-        if (part.includes("-")) {
-            const [start, end] = part.split("-").map(Number);
-            if (value >= start && value <= end)
-                return true;
-            continue;
-        }
-        // Handle exact number
-        if (parseInt(part, 10) === value)
-            return true;
-    }
-    return false;
-}
-function cronMatchesNow(expr, now) {
-    const fields = expr.trim().split(/\s+/);
-    if (fields.length < 5) {
-        console.error(`[Scheduler] Invalid cron expression (need 5 fields): "${expr}"`);
-        return false;
-    }
-    const [minuteExpr, hourExpr, dayExpr, monthExpr, dowExpr] = fields;
-    const minute = now.getMinutes();
-    const hour = now.getHours();
-    const day = now.getDate();
-    const month = now.getMonth() + 1; // JS months are 0-indexed
-    const dow = now.getDay(); // 0=Sunday
-    return (matchCronField(minuteExpr, minute, 59) &&
-        matchCronField(hourExpr, hour, 23) &&
-        matchCronField(dayExpr, day, 31) &&
-        matchCronField(monthExpr, month, 12) &&
-        matchCronField(dowExpr, dow, 6));
-}
-/** Convert current time to a specific timezone using Intl API */
-function getNowInTz(tz) {
-    if (!tz)
-        return new Date();
-    try {
-        const str = new Date().toLocaleString("en-US", { timeZone: tz });
-        return new Date(str);
-    }
-    catch {
-        console.error(`[Scheduler] Invalid timezone "${tz}", falling back to local time`);
-        return new Date();
-    }
-}
 // ─── State Management ────────────────────────────────────────────────────────
 async function loadState() {
     try {
