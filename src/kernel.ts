@@ -16,12 +16,18 @@ const MEMORY_DIR = path.join(MINICLAW_DIR, "memory");
 const STATE_FILE = path.join(MINICLAW_DIR, "state.json");
 const STASH_FILE = path.join(MINICLAW_DIR, "STASH.json");
 const ENTITIES_FILE = path.join(MINICLAW_DIR, "entities.json");
+export const CONFIG_FILE = path.join(MINICLAW_DIR, "miniclaw.config.json");
 
 // Context budget (configurable via env)
 const DEFAULT_TOKEN_BUDGET = parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
 const CHARS_PER_TOKEN = 4;
 
 // --- Interfaces ---
+export interface MiniClawConfig {
+    remUrl?: string; // Example: "http://localhost:11434/api/generate"
+    remModel?: string; // Example: "llama3.2"
+}
+
 export interface RuntimeInfo {
     os: string;
     node: string;
@@ -1230,6 +1236,15 @@ export class ContextKernel {
     async getSkillCount(): Promise<number> {
         const skills = await this.skillCache.getAll();
         return skills.size;
+    }
+
+    async getConfig(): Promise<MiniClawConfig> {
+        try {
+            const raw = await fs.readFile(CONFIG_FILE, "utf-8");
+            return JSON.parse(raw);
+        } catch {
+            return {};
+        }
     }
 
     // === Smart Distillation Evaluation ===

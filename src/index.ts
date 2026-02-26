@@ -72,6 +72,29 @@ async function executeHeartbeat(): Promise<void> {
             await kernel.updateHeartbeatState({ needsDistill: true });
             console.error(`[MiniClaw] Auto-archive: daily log exceeds 50KB (${updatedHb.dailyLogBytes}B), flagging needsDistill.`);
         }
+
+        // 💤 Subconscious REM Sleep (Local LLM Hook)
+        const analytics = await kernel.getAnalytics();
+        const lastActivityMs = new Date(analytics.lastActivity || 0).getTime();
+        const isSleeping = (Date.now() - lastActivityMs) > 60 * 60 * 1000; // 1 hour of inactivity
+
+        if (isSleeping && updatedHb.needsDistill) {
+            const config = await kernel.getConfig();
+            if (config.remUrl) {
+                console.error(`[MiniClaw] 💤 Entering REM Sleep: Triggering local autonomic memory distillation via ${config.remUrl}...`);
+                // Fire and forget local hook
+                try {
+                    fetch(config.remUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            model: config.remModel || "llama3.2",
+                            prompt: "Autonomic memory distillation triggered."
+                        })
+                    }).catch(() => { });
+                } catch { }
+            }
+        }
     } catch (err) {
         console.error(`[MiniClaw] Heartbeat error: ${err}`);
     }
