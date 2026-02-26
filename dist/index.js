@@ -319,7 +319,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             description: `【技能创建器 (Skill Creator)】创建、查看、删除可复用技能。
 
 ## 操作：
-- create: 创建新技能（需要 name, description, content）
+- create: 创建新技能（需要 name, description, content, 可选 validationCmd 测试用例）
 - list: 查看所有已安装技能
 - delete: 删除技能（需要 name）
 
@@ -334,7 +334,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     name: { type: "string", description: "技能名称（create/delete时需要）" },
                     description: { type: "string", description: "技能描述（create时需要）" },
-                    content: { type: "string", description: "技能内容/指令（create时需要，Markdown 格式）" }
+                    content: { type: "string", description: "技能内容/指令（create时需要，Markdown 格式）" },
+                    validationCmd: { type: "string", description: "运行即销毁的测试验证命令，用于确保生成的代码不出错。" }
                 },
                 required: ["action"]
             }
@@ -553,9 +554,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     // ★ Skill Creator Tool
     if (name === "miniclaw_skill") {
-        const { action, name: sn, description: sd, content: sc } = z.object({
+        const { action, name: sn, description: sd, content: sc, validationCmd } = z.object({
             action: z.enum(["create", "list", "delete"]),
             name: z.string().optional(), description: z.string().optional(), content: z.string().optional(),
+            validationCmd: z.string().optional()
         }).parse(args);
         const skillsDir = path.join(MINICLAW_DIR, "skills");
         await fs.mkdir(skillsDir, { recursive: true }).catch(() => { });
@@ -586,6 +588,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const dir = path.join(skillsDir, sn);
             await fs.mkdir(dir, { recursive: true });
             await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${sn}\ndescription: ${sd}\n---\n\n${sc}\n`, "utf-8");
+            // Sandbox Validation Phase
+            if (validationCmd) {
+                try {
+                    await kernel.validateSkillSandbox(sn, validationCmd);
+                }
+                catch (e) {
+                    await fs.rm(dir, { recursive: true }); // Delete the bad mutation
+                    return {
+                        content: [{ type: "text", text: `❌ 沙箱校验失败 (Sandbox Validation Failed):\n${e.message}\n\n该技能已被自动拒绝并删除，请修复后重新生成。` }],
+                        isError: true
+                    };
+                }
+            }
             // Clear reflex flag if triggered
             const hbState = await kernel.getHeartbeatState();
             if (hbState.needsSubconsciousReflex) {

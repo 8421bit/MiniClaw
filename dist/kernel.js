@@ -618,6 +618,22 @@ export class ContextKernel {
             return `Skill execution failed: ${e.message}\nOutput: ${e.stdout || e.stderr}`;
         }
     }
+    // === SANDBOX VALIDATION ===
+    async validateSkillSandbox(skillName, validationCmd) {
+        const skillDir = path.join(SKILLS_DIR, skillName);
+        try {
+            // Run in a restricted environment with a strict timeout
+            const { stdout, stderr } = await execAsync(`cd "${skillDir}" && ${validationCmd}`, {
+                timeout: 2000, // 2 seconds P0 strict timeout for generated skills
+                env: { ...process.env, MINICLAW_SANDBOX: "1" }
+            });
+            console.error(`[MiniClaw] Sandbox validation passed for ${skillName}. Output: ${stdout.trim().slice(0, 50)}...`);
+        }
+        catch (e) {
+            const errorOutput = e.stdout || e.stderr || e.message;
+            throw new Error(`Execution failed with code ${e.code || 1}\nOutput:\n${errorOutput.trim().slice(0, 500)}`);
+        }
+    }
     // === LIFECYCLE HOOKS ===
     // Skills can declare hooks via metadata.hooks: "onBoot,onHeartbeat,onMemoryWrite"
     // When an event fires, all matching skills with exec scripts are run.
