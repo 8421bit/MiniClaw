@@ -7,9 +7,63 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cron from "node-cron";
+import net from "node:net";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
 // Configuration
 const kernel = new ContextKernel();
+// --- Hive-Mind IPC ---
+const SocketsDir = path.join(MINICLAW_DIR, "sockets");
+const MySocketPath = path.join(SocketsDir, `mcp-${process.pid}.sock`);
+async function initHiveMind() {
+    await fs.mkdir(SocketsDir, { recursive: true }).catch(() => { });
+    // Clean up old dead sockets
+    try {
+        const socks = await fs.readdir(SocketsDir);
+        for (const s of socks) {
+            const p = path.join(SocketsDir, s);
+            const client = net.createConnection(p);
+            client.on('connect', () => client.destroy());
+            client.on('error', () => fs.unlink(p).catch(() => { }));
+        }
+    }
+    catch { }
+    const ipcServer = net.createServer((c) => {
+        c.on('data', async (data) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                if (msg.event === "MEMORY_MUTATED" || msg.event === "ENTITY_MUTATED") {
+                    console.error(`[MiniClaw] 🕸️ Hive-Mind pulse received: ${msg.event}. Invalidating caches...`);
+                    kernel.invalidateCaches();
+                }
+            }
+            catch { }
+        });
+        c.on('error', () => { });
+    });
+    ipcServer.listen(MySocketPath, () => {
+        console.error(`[MiniClaw] 🕸️ Hive-Mind node registered at ${MySocketPath}`);
+    });
+    const cleanup = () => { fs.unlink(MySocketPath).catch(() => { }); };
+    process.on('exit', cleanup);
+    process.on('SIGINT', () => { cleanup(); process.exit(); });
+    process.on('SIGTERM', () => { cleanup(); process.exit(); });
+}
+async function broadcastPulse(event) {
+    try {
+        const socks = await fs.readdir(SocketsDir);
+        for (const s of socks) {
+            const p = path.join(SocketsDir, s);
+            if (p === MySocketPath)
+                continue;
+            const client = net.createConnection(p, () => {
+                client.write(JSON.stringify({ event }));
+                client.end();
+            });
+            client.on('error', () => fs.unlink(p).catch(() => { }));
+        }
+    }
+    catch { }
+}
 // Ensure miniclaw dir exists
 async function ensureDir() {
     try {
@@ -481,6 +535,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             await kernel.runSkillHooks("onMemoryWrite");
         }
         catch { }
+        // 🕸️ Hive Mind Broadcast 
+        broadcastPulse("MEMORY_MUTATED");
         return { content: [{ type: "text", text: `Updated ${filename}.` }] };
     }
     if (name === "miniclaw_note") {
@@ -527,18 +583,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 attributes: attributes || {},
                 relations: relation ? [relation] : [],
             });
+            broadcastPulse("ENTITY_MUTATED");
             return { content: [{ type: "text", text: `Entity "${entity.name}" (${entity.type}) — ${entity.mentionCount} mentions. Relations: ${entity.relations.join(', ') || 'none'}` }] };
         }
         if (action === "remove") {
             if (!entityName)
                 return { content: [{ type: "text", text: "Error: 'name' required." }] };
             const removed = await kernel.entityStore.remove(entityName);
+            broadcastPulse("ENTITY_MUTATED");
             return { content: [{ type: "text", text: removed ? `Removed "${entityName}".` : `Entity "${entityName}" not found.` }] };
         }
         if (action === "link") {
             if (!entityName || !relation)
                 return { content: [{ type: "text", text: "Error: 'name' and 'relation' required." }] };
             const linked = await kernel.entityStore.link(entityName, relation);
+            broadcastPulse("ENTITY_MUTATED");
             return { content: [{ type: "text", text: linked ? `Linked "${entityName}" → "${relation}".` : `Entity "${entityName}" not found.` }] };
         }
         if (action === "query") {
@@ -806,5 +865,6 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 });
 await bootstrapMiniClaw();
 initScheduler();
+await initHiveMind();
 const transport = new StdioServerTransport();
 await server.connect(transport);

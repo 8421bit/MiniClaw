@@ -104,6 +104,10 @@ class SkillCache {
 class EntityStore {
     entities = [];
     loaded = false;
+    invalidate() {
+        this.loaded = false;
+        this.entities = [];
+    }
     async load() {
         if (this.loaded)
             return;
@@ -275,9 +279,24 @@ export class ContextKernel {
      * Living Agent v0.5 "The Nervous System":
      * - ACE (Time, Continuation)
      * - Workspace Auto-Detection (Project, Git, Files)
-     * - Entity Surfacing
-     * - Budget Management
      */
+    stashStr = null;
+    stashLoaded = false;
+    invalidateCaches() {
+        this.skillCache.invalidate();
+        this.entityStore.invalidate();
+        this.state = {
+            analytics: {
+                toolCalls: {}, promptsUsed: {}, bootCount: 0,
+                totalBootMs: 0, lastActivity: "", skillUsage: {},
+                dailyDistillations: 0,
+            },
+            heartbeat: { ...DEFAULT_HEARTBEAT },
+            previousHashes: {}
+        };
+        this.stashLoaded = false;
+        this.stateLoaded = false;
+    }
     async boot(mode = { type: "full" }) {
         this.bootErrors = [];
         const bootStart = Date.now();

@@ -230,6 +230,11 @@ class EntityStore {
     private entities: Entity[] = [];
     private loaded = false;
 
+    invalidate(): void {
+        this.loaded = false;
+        this.entities = [];
+    }
+
     async load(): Promise<void> {
         if (this.loaded) return;
         try {
@@ -407,9 +412,26 @@ export class ContextKernel {
      * Living Agent v0.5 "The Nervous System":
      * - ACE (Time, Continuation)
      * - Workspace Auto-Detection (Project, Git, Files)
-     * - Entity Surfacing
-     * - Budget Management
      */
+    private stashStr: string | null = null;
+    private stashLoaded = false;
+
+    invalidateCaches(): void {
+        this.skillCache.invalidate();
+        this.entityStore.invalidate();
+        this.state = {
+            analytics: {
+                toolCalls: {}, promptsUsed: {}, bootCount: 0,
+                totalBootMs: 0, lastActivity: "", skillUsage: {},
+                dailyDistillations: 0,
+            },
+            heartbeat: { ...DEFAULT_HEARTBEAT },
+            previousHashes: {}
+        };
+        this.stashLoaded = false;
+        this.stateLoaded = false;
+    }
+
     async boot(mode: ContextMode = { type: "full" }): Promise<string> {
         this.bootErrors = [];
         const bootStart = Date.now();
