@@ -119,6 +119,17 @@ Think of it like reviewing your journal and updating your mental model. Daily fi
 └── memory/archived/   # 🗄️ Archived logs
 ```
 
+### 📚 Core Files Overview
+
+| File | Purpose | Contents | Read When |
+|:---|:---|:---|:---|
+| **IDENTITY.md** | Who am I | Name, emoji, tech stack, heartbeat, skills | Every session start |
+| **SOUL.md** | My soul | Worldview, values, personality, core principles | Every session start |
+| **USER.md** | My human | User preferences, habits, anti-patterns | Every session start |
+| **TOOLS.md** | Tool experience | Environment config, usage tips, tricks | When needed |
+| **MEMORY.md** | Long-term memory | Knowledge, insights, facts (main session only) | Main sessions |
+| **AGENTS.md** | Workspace charter | Operations, wakeup sequence, standards | As reference guide |
+
 ### Content Boundaries
 
 Each file has strict content boundaries:
