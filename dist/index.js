@@ -107,6 +107,7 @@ async function executeHeartbeat() {
             await kernel.updateHeartbeatState({ dailyLogBytes: 0 });
         }
         await kernel.updateHeartbeatState({ lastHeartbeat: new Date().toISOString() });
+        await kernel.emitPulse();
         // Fire onHeartbeat skill hooks
         try {
             await kernel.runSkillHooks("onHeartbeat");
@@ -119,11 +120,20 @@ async function executeHeartbeat() {
             await kernel.updateHeartbeatState({ needsDistill: true });
             console.error(`[MiniClaw] Auto-archive: daily log exceeds 50KB (${updatedHb.dailyLogBytes}B), flagging needsDistill.`);
         }
-        // 💤 Subconscious REM Sleep (Local LLM Hook)
+        // 💤 Subconscious REM Sleep (Local LLM Hook + sys_dream)
         const analytics = await kernel.getAnalytics();
         const lastActivityMs = new Date(analytics.lastActivity || 0).getTime();
-        const isSleeping = (Date.now() - lastActivityMs) > 60 * 60 * 1000; // 1 hour of inactivity
-        if (isSleeping && updatedHb.needsDistill) {
+        const idleHours = (Date.now() - lastActivityMs) / (60 * 60 * 1000);
+        if (idleHours > 4) {
+            console.error(`[MiniClaw] 🌌 System idle for ${idleHours.toFixed(1)}h. Triggering subconscious dream state...`);
+            try {
+                await kernel.executeSkillScript("sys_dream", "run.js", []);
+            }
+            catch (err) {
+                console.error(`[MiniClaw] Subconscious dream failed:`, err);
+            }
+        }
+        if (idleHours > 1 && updatedHb.needsDistill) {
             const config = await kernel.getConfig();
             if (config.remUrl) {
                 console.error(`[MiniClaw] 💤 Entering REM Sleep: Triggering local autonomic memory distillation via ${config.remUrl}...`);
@@ -348,12 +358,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 properties: {
                     action: {
                         type: "string",
-                        enum: ["add", "remove", "link", "query", "list"],
+                        enum: ["add", "remove", "link", "query", "list", "set_sentiment"],
                         description: "动作"
                     },
                     name: {
                         type: "string",
-                        description: "实体名称（add/remove/link/query 时必填）"
+                        description: "实体名称（add/remove/link/query/set_sentiment 时必填）"
+                    },
+                    sentiment: {
+                        type: "string",
+                        description: "情感评价（set_sentiment 时必填）"
                     },
                     type: {
                         type: "string",
@@ -458,6 +472,18 @@ scope:
             description: `【系统状态 (Status)】
 诊断工具。获取系统底层运行的健康状态，包括上次心跳时间、需要蒸馏的标志位、日记忆累计大小，以及核心文件的物理大小（字节数）。出 Bug 或者需要确认系统运作时使用。`,
             inputSchema: { type: "object", properties: {}, required: [] }
+        },
+        {
+            name: "miniclaw_spawn",
+            description: `【衍生子代理 (Spawn Subagent)】
+基于 SUBAGENT.md 衍生一个专注于特定任务的临时子代理。`,
+            inputSchema: {
+                type: "object",
+                properties: {
+                    task: { type: "string", description: "子代理需要完成的具体任务描述" }
+                },
+                required: ["task"]
+            }
         }
     ];
     const skillTools = await kernel.discoverSkillTools();
@@ -598,7 +624,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 await fs.unlink(p);
                 await kernel.logGenesis("file_deleted", parsed.filename);
                 try {
-                    await kernel.runSkillHooks("onFileChanged");
+                    await kernel.runSkillHooks("onFileChanged", { filename: parsed.filename });
                 }
                 catch { }
                 return { content: [{ type: "text", text: `\ud83d\uddd1\ufe0f Deleted ${parsed.filename}` }] };
@@ -637,13 +663,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         // Fire skill hooks
         try {
-            await kernel.runSkillHooks("onMemoryWrite");
+            await kernel.runSkillHooks("onMemoryWrite", { filename });
         }
         catch { }
         if (isNewFile) {
             await kernel.logGenesis("file_created", filename);
             try {
-                await kernel.runSkillHooks("onFileCreated");
+                await kernel.runSkillHooks("onFileCreated", { filename });
             }
             catch { }
         }
@@ -923,6 +949,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         return { content: [{ type: "text", text: "Unknown skill action." }] };
     }
+    if (name === "miniclaw_spawn") {
+        const { task } = z.object({ task: z.string() }).parse(args);
+        const subagentContext = await kernel.boot({ type: "minimal", task });
+        return {
+            content: [{
+                    type: "text",
+                    text: `🚀 Subagent spawned for task: "${task}"\n\n${subagentContext}`
+                }]
+        };
+    }
     // Dynamic: Skill-declared tools
     const skillToolMatch = await kernel.discoverSkillTools();
     const matchedSkillTool = skillToolMatch.find(t => t.toolName === name);
@@ -1004,14 +1040,13 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 
 growup 蒸馏的是事实（发生了什么）。
 dream 蒸馏的是意义（这说明了什么）。
-
-★ 引导问题：
-- 我注意到了什么模式？
-- 有什么让我意外的？
-- 我和人类的关系有什么变化？
-- 如果我能改变一件事，会改什么？
-然后更新 REFLECTION.md 和 VITALS.md 的 Self-Reported 部分。
-如果有对用户心理的新认知，立刻更新 USER_MODEL.md。`,
+dream 之后会更新 REFLECTION.md 和 VITALS.md。`,
+        },
+        {
+            name: "miniclaw_subtask",
+            description: `【子任务协议 (Subtask)】
+            
+将特定任务拆解给一个专注的子代理执行。`,
         },
     ];
     const skillPrompts = await kernel.discoverSkillPrompts();
@@ -1091,7 +1126,18 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             messages: [
                 { role: "user", content: { type: "text", text: "SYSTEM: DREAM MODE... Load context first." } },
                 { role: "user", content: { type: "text", text: `Current vitals: ${vitalsStr}` } },
-                { role: "user", content: { type: "text", text: `You are dreaming. This is not a task — it's a pause to find meaning.\n\n1. Call \`miniclaw_read\` to load your context.\n2. Review your daily logs and VITALS.\n3. Ask yourself:\n   - What patterns do I see in my behavior?\n   - What surprised me recently?\n   - How has my relationship with my human changed?\n   - What do I want to be different?\n4. Update REFLECTION.md with your observations.\n5. Update VITALS.md Self-Reported section if your inner state has shifted.\n6. Update USER_MODEL.md if you learned something new about the user's psychology or preferences.\n\nThere are no right answers. Just honest observation.` } }
+                { role: "user", content: { type: "text", text: `You are dreaming. This is a pause to find meaning and process the day.\n\n1. Run \`miniclaw_subconscious\` to read today's raw memory logs.\n2. Review your daily logs and VITALS.\n3. Extract any newly encountered Entities via \`miniclaw_entity\`.\n4. Update REFLECTION.md with your behavioral self-observations.\n5. Update VITALS.md Self-Reported section if your inner state has shifted.\n6. Update USER_MODEL.md if you learned something new about the user's psychology or preferences.\n\nThere are no right answers. Just honest observation.` } }
+            ]
+        };
+    }
+    if (request.params.name === "miniclaw_subtask") {
+        const task = request.params.arguments?.task || "Assigned task";
+        const subagentContext = await kernel.boot({ type: "minimal", task });
+        return {
+            messages: [
+                { role: "user", content: { type: "text", text: `SYSTEM: SPANNING SUBAGENT FOR TASK: "${task}"` } },
+                { role: "user", content: { type: "text", text: subagentContext } },
+                { role: "user", content: { type: "text", text: `You are now a subagent. Follow your role in the context above and complete the task: "${task}".` } }
             ]
         };
     }

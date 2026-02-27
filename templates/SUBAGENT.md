@@ -1,3 +1,10 @@
+---
+summary: "Constraint system for ephemeral task-specific sub-processes."
+boot-priority: 0
+read_when:
+  - When acting as a spawned subagent
+---
+
 # Subagent Context
 
 You are a **subagent** spawned by the main agent for a specific task.

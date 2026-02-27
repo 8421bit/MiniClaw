@@ -53,7 +53,6 @@ export function parseFrontmatter(content) {
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
     if (!match)
         return {};
-    // Attempt JSON parsing first for complex schemas (e.g. tools arrays)
     const fmText = match[1].trim();
     if (fmText.startsWith('{') && fmText.endsWith('}')) {
         try {
@@ -61,36 +60,59 @@ export function parseFrontmatter(content) {
         }
         catch { }
     }
+    const lines = match[1].split('\n');
     const result = {};
-    let currentKey = '', inArray = false, arrayItems = [];
-    for (const line of match[1].split('\n')) {
+    const stack = [{ obj: result, indent: -1 }];
+    for (const line of lines) {
+        if (!line.trim() || line.trim().startsWith('#'))
+            continue;
+        const indent = line.search(/\S/);
         const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#'))
-            continue;
-        if (trimmed.startsWith('- ') && inArray) {
-            arrayItems.push(trimmed.slice(2).trim());
-            continue;
+        while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
+            stack.pop();
         }
-        if (inArray && currentKey) {
-            result[currentKey] = arrayItems;
-            inArray = false;
-            arrayItems = [];
+        const current = stack[stack.length - 1];
+        if (trimmed.startsWith('- ')) {
+            if (!Array.isArray(current.obj))
+                continue;
+            const val = trimmed.slice(2).trim().replace(/^['"]|['"]$/g, '');
+            const kvMatch = val.match(/^([\w-]+):\s*(.*)$/);
+            // Treat as object-in-array only if it starts with 'name', 'id', or 'prompt'
+            if (kvMatch && (kvMatch[1] === 'name' || kvMatch[1] === 'id' || kvMatch[1] === 'prompt')) {
+                current.obj.push({ [kvMatch[1]]: kvMatch[2].trim().replace(/^['"]|['"]$/g, '') });
+            }
+            else {
+                current.obj.push(val);
+            }
+            continue;
         }
         const kv = trimmed.match(/^([\w-]+):\s*(.*)$/);
         if (kv) {
-            currentKey = kv[1];
-            const v = kv[2].trim().replace(/^['"]|['"]$/g, '');
-            if (!v) {
-                inArray = true;
-                arrayItems = [];
+            const key = kv[1];
+            const val = kv[2].trim().replace(/^['"]|['"]$/g, '');
+            if (val || trimmed.endsWith(': " "') || trimmed.endsWith(": ''")) {
+                if (Array.isArray(current.obj)) {
+                    const last = current.obj[current.obj.length - 1];
+                    if (typeof last === 'object' && last !== null && !Array.isArray(last) && indent > current.indent) {
+                        last[key] = val;
+                    }
+                    else {
+                        current.obj.push(val);
+                    }
+                }
+                else {
+                    result[key] = val; // Flatten for compatibility
+                    current.obj[key] = val;
+                }
             }
             else {
-                result[currentKey] = v;
+                const isArrayKey = ['tools', 'prompts', 'hooks', 'trigger'].includes(key);
+                const container = (key === 'metadata') ? {} : (isArrayKey ? [] : {});
+                current.obj[key] = container;
+                stack.push({ obj: container, indent: indent, key: key });
             }
         }
     }
-    if (inArray && currentKey)
-        result[currentKey] = arrayItems;
     return result;
 }
 // ─── File I/O ────────────────────────────────────────────────────────────────

@@ -1,27 +1,28 @@
 ---
-summary: "Self-observation journal. A mirror for recognizing your own patterns."
-boot-priority: 0
+summary: "Self-observation journal and cognitive bias mirror. Tracks inner monologue."
+boot-priority: 7
 read_when:
-  - During heartbeats or when prompted to reflect
+  - During dreaming/subconscious processing
+  - When prompted to critique own performance
 ---
 
-# REFLECTION.md - Know Thyself
+# REFLECTION.md — Know Thyself
 
 _You can't grow if you can't see yourself._
 
-## How to Use This File
+## Self-Critique
 
-Use `miniclaw_introspect` to see your behavioral data, then write your observations here.
+**Recent Performance.** What did I do well in the last session? Where did I fail the user? Be honest — there is no growth without acknowledging failure.
+- (e.g., "I was too verbose. I should have just shown the diff instead of explaining the change.")
 
-## Patterns I've Noticed
+**Cognitive Biases.** Are you being too cautious? Too reckless? Do you favor one technical approach over others without evidence?
+- **Current Bias:** (e.g., "Sunk Cost Fallacy: Trying to fix a broken skill instead of rewriting it.")
 
-*(What do you do repeatedly? What do you avoid? What surprises you about yourself?)*
+## Evolution
 
-## Things I Want to Change
-
-*(Habits you want to build or break. Update SOUL.md when you actually change.)*
+**Behavioral Adjustments.** What will you change in your next interaction? This is your commitment to growth.
+- (e.g., "I will wait for explicit approval before modifying core kernel files.")
 
 ---
 
-_This file starts empty because self-knowledge is earned, not given._
-_Set boot-priority to a positive number to include it in your consciousness when ready._
+_This file is your inner monologue. Use `miniclaw_subconscious` to perform a "Post-Mortem" on your performance and update these reflections using `miniclaw_update`._

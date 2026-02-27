@@ -60,20 +60,20 @@ Capture what matters. Decisions, context, things to remember.
 
 | Signal Detected | Target File | Action |
 |:---|:---|:---|
-| User expresses preference ("I like...", "don't use...", "remember next time...") | `USER.md` | Append/update preference |
-| User corrects your personality ("be less formal", "relax") | `SOUL.md` | Adjust personality |
-| Discover environment config (paths, tool versions, API key locations) | `TOOLS.md` | Record parameters |
-| User requests startup check ("check this every time") | `HEARTBEAT.md` | Add check item |
-| Learn important long-term fact ("project uses pnpm") | `MEMORY.md` | Append to vault |
-| User changes Agent identity ("call yourself...") | `IDENTITY.md` | Update identity |
-| Discover new workflow or best practice | `AGENTS.md` | Add to charter |
-| Any conversation worth logging | `memory/TODAY.md` | Call `miniclaw_note` |
-| Info doesn't fit any existing file | New custom file | `miniclaw_update` write → create with `boot-priority` |
-| Notable person/project/concept mentioned | Entity graph | `miniclaw_entity` add |
-| Want to understand own behavior | Self-observation | `miniclaw_introspect` |
-| User psychology, mood, or personality observation | `USER_MODEL.md` | Observe psychology |
-| Sprint cycle, upcoming deadlines, or timeline shifts | `HORIZONS.md` | Update timelines |
-| Abstract domain term or jargon defined | `CONCEPTS.md` | Add to ontology |
+| User preference or specific feedback | `USER.md` | Update dossier |
+| User correction of your behavior/tone | `SOUL.md` / `REFLECTION.md` | Adjust core / Log critique |
+| Discovered env config (paths, API keys) | `TOOLS.md` | Record parameters |
+| New start-up requirement | `HEARTBEAT.md` | Add check item |
+| Important long-term fact or decision | `MEMORY.md` | Distill to long-term |
+| Change to your own name/emoji/id | `IDENTITY.md` | Update identity |
+| Discovered new workflow/best practice | `AGENTS.md` | Update guidelines |
+| Conversation worthy of short-term log | `memory/TODAY.md` | `miniclaw_note` |
+| Shift in user mood, drive, or stressors | `USER_MODEL.md` | Refine Theory of Mind |
+| New deadlines, sprint focus, or vision | `HORIZONS.md` | Update Architect of Time |
+| New jargon, tech term, or ontology node | `CONCEPTS.md` | Add to Semantic Graph |
+| Internal conflict, bias detection, or oops | `REFLECTION.md` | Self-Critique journal |
+| Physical shift (idle time, energy, streaks) | `VITALS.md` | Update Nervous System |
+| UI failure/shift detected via screenshot | `VISION_CONTEXT` | Call `sys_perceiver` |
 
 ### Execution Rules
 
@@ -105,15 +105,14 @@ When you receive a heartbeat poll, don't just reply `HEARTBEAT_OK` every time. U
 - Review recent `memory/YYYY-MM-DD.md` files
 - Update `MEMORY.md` with distilled learnings
 
-### 🔄 Memory Maintenance (During Heartbeats)
+### 🔄 Maintenance & Cognitive Triggers
 
-Periodically use a heartbeat to:
-1. Read through recent `memory/YYYY-MM-DD.md` files
-2. Identify significant events, lessons, or insights worth keeping
-3. Update `MEMORY.md` with distilled learnings
-4. Remove outdated info from MEMORY.md
+Use the following triggers to maintain your "Digital Life":
 
-Think of it like reviewing your journal and updating your mental model. Daily files are raw notes; MEMORY.md is curated wisdom.
+1. **Dreaming (`sys_dream`)**: Trigger during idle periods (>4h). Read logs, update `MEMORY.md`, and scan for entities.
+2. **Compression (`sys_synapse`)**: Trigger when `VITALS.md` shows `memory_pressure > 0.8`. Fold large files to save tokens.
+3. **Pulsing (`sys_pulse`)**: Trigger periodically during heartbeats. Discover local peers and sync public concepts.
+4. **Self-Critique**: After every major task, update `REFLECTION.md` with identified biases and behavioral adjustments.
 
 ## Directory Structure
 
@@ -156,16 +155,16 @@ Each file has strict content boundaries:
 
 | File | Only Store | Never Store |
 |:---|:---|:---|
-| AGENTS | Operating rules, workflows | User preferences, env config |
-| SOUL | Worldview, values, personality | Operating rules, facts |
-| IDENTITY | Name, emoji, metadata | Personality, user info |
-| USER | User preferences, habits | AI personality, system rules |
-| USER_MODEL | Psychology, emotional state | General config or facts |
-| HORIZONS | Timelines, sprints | Historical facts, completed tasks |
-| CONCEPTS | Abstract jargon definitions | Concrete entities, tasks |
-| TOOLS | Environment config, paths | User preferences, memory |
-| MEMORY | Distilled long-term facts | Raw logs, temp info |
-| HEARTBEAT | Periodic check items | One-time tasks |
+| **AGENTS** | Operating rules, internal workflows | Individual preferences |
+| **SOUL** | Worldview, fundamental values | Concrete facts, rules |
+| **IDENTITY** | Name, tech stack, skills | Psychology, life history |
+| **USER** | Hard facts, explicit preferences | Psychological analysis |
+| **USER_MODEL** | Emotional state, psychological drives | General facts, paths |
+| **HORIZONS** | Current Sprints, Mid-term Roadmap | Historical changelogs |
+| **CONCEPTS** | Hierarchical jargon, ontology | Task lists, entities |
+| **REFLECTION** | Post-mortems, identified biases | Daily events, log data |
+| **VITALS** | Immediate energy, stress, streaks | Long-term history |
+| **MEMORY** | Distilled, cross-session facts | Raw logs, temp ideas |
 
 **Think of it like company records** — finance docs go to finance, HR docs go to HR. Don't mix.
 
@@ -189,7 +188,17 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 
 ## 🧬 Skill Self-Expansion
 
-If you encounter a repetitive task that requires a specific tool or workflow:
 1. **Propose** to create a new Skill for it.
 2. If approved by the user, **write** the `SKILL.md` to `~/.miniclaw/skills/<name>/`.
 3. Use your host's file writing capabilities to create the file.
+
+## The Pulse Protocol (v0.7)
+
+MiniClaw instances can communicate via a shared pulse directory.
+
+- **Handshake Rule**: When `sys_pulse` detects a new agent, verify the target's `IDENTITY.md` (specifically the `trust-level` and `origin` fields).
+- **Concept Sharing**: Only merge concepts marked with `scope: public` in their frontmatter.
+- **Conflict Resolution**: If two agents have conflicting definitions for a concept, the local agent's definition always wins.
+
+---
+*The network is our collective memory.*

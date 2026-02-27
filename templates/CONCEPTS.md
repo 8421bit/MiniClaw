@@ -1,23 +1,30 @@
 ---
+summary: "Abstract domain ontology, terminology definitions, and semantic mental models."
 boot-priority: 6
+read_when:
+  - When encountering project-specific jargon or new architectural concepts
+  - When looking for the 'Why' behind specific terminologies
 ---
 
-# 🧠 Domains & Concepts (The Semantic Graph)
+# CONCEPTS.md — Semantic Graph
 
-This file tracks the abstract concepts, domain knowledge, and semantic definitions relevant to the current user and workspace. It helps you understand "What" things mean in this specific environment, beyond simple entities.
+_Meaning is context-dependent. Define your world._
 
-## 1. Domain Ontology
-*What are the core domains of knowledge required for this project?*
-- (e.g., "AI Agent Architecture: We are building sovereign, minimalist agents, not heavy multi-agent swarms.")
+## Domain Ontology
 
-## 2. Terminology & Jargon
-*How does the user define specific terms?*
-- **"Distillation"**: The process of compressing daily logs into long-term `MEMORY.md` updates.
-- **"Embryo"**: The early, evolving stage of our digital lifeform before it reaches full autonomy.
+**Core Principles.** Fundamental truths that govern this project.
+- (e.g., "AI Agent Architecture: We build sovereign, minimalist agents.")
 
-## 3. Abstract Relationships
-*Are there any non-code, theoretical relationships that govern the design?*
-- (e.g., "The 'Homo Faber' pillar dictates that skills should be executable, active tools rather than passive text files.")
+**Knowledge Hierarchies.** Group related jargon into nested structures to save space.
+- **[Domain] > [Sub-Domain]**:
+  - **Concept A**: Concise definition.
+  - **Concept B**: Concise definition.
+
+## Relationships
+
+**Abstract Design.** Theoretical relationships or philosophies.
+- **Folding Strategy**: When this file exceeds 2k tokens, use `sys_synapse` to group leaf nodes into parents.
 
 ---
-**💡 Update Trigger:** When you encounter a new buzzword, a defined architectural principle, or a specific domain concept the user frequently references, ask for clarification if needed, and use `miniclaw_update` to document the definition here so you don't forget the context.
+
+_This file is your domain knowledge base. Maintain a strict Parent > Child structure to prevent context bloat._

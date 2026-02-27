@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
 const execAsync = promisify(exec);
 // --- Configuration & Constants ---
@@ -10,10 +11,16 @@ const HOME_DIR = process.env.HOME || process.cwd();
 export const MINICLAW_DIR = path.join(HOME_DIR, ".miniclaw");
 const SKILLS_DIR = path.join(MINICLAW_DIR, "skills");
 const MEMORY_DIR = path.join(MINICLAW_DIR, "memory");
+const PULSE_DIR = path.join(MINICLAW_DIR, "pulse");
 const STATE_FILE = path.join(MINICLAW_DIR, "state.json");
 const STASH_FILE = path.join(MINICLAW_DIR, "STASH.json");
 const ENTITIES_FILE = path.join(MINICLAW_DIR, "entities.json");
 export const CONFIG_FILE = path.join(MINICLAW_DIR, "miniclaw.config.json");
+// Internal templates directory (within the package)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const INTERNAL_TEMPLATES_DIR = path.resolve(__dirname, "..", "templates");
+const INTERNAL_SKILLS_DIR = path.join(INTERNAL_TEMPLATES_DIR, "skills");
 // Context budget (configurable via env)
 const DEFAULT_TOKEN_BUDGET = parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
 const CHARS_PER_TOKEN = 4;
@@ -309,7 +316,7 @@ export class ContextKernel {
         catch { /* logs should not break execution */ }
     }
     // ★ Vitals: compute raw internal state signals
-    async computeVitals() {
+    async computeVitals(todayContent) {
         await this.loadState();
         const analytics = this.state.analytics;
         // idle_hours: time since last activity
@@ -344,12 +351,24 @@ export class ContextKernel {
         const avgBoot = analytics.bootCount > 0
             ? Math.round(analytics.totalBootMs / analytics.bootCount)
             : 0;
+        // frustration: count keywords like "error", "fail", "don't", "no" in today's log
+        let frustration = 0;
+        if (todayContent) {
+            const low = todayContent.toLowerCase();
+            const keywords = ["error", "fail", "wrong", "annoy", "don't", "stop", "bad"];
+            keywords.forEach(k => {
+                const matches = low.split(k).length - 1;
+                frustration += matches;
+            });
+        }
+        const frustrationScore = Math.min(1.0, frustration / 10);
         return {
             idle_hours: idleHours,
             session_streak: streak,
             memory_pressure: Math.min(memoryPressure, 1.0),
             total_sessions: analytics.bootCount,
             avg_boot_ms: avgBoot,
+            frustration_index: frustrationScore,
         };
     }
     /**
@@ -396,6 +415,9 @@ export class ContextKernel {
             }
             else {
                 context += `You are a subagent. Focus on the task. No side effects.\n\n`;
+            }
+            if (mode.task) {
+                context += `## 🎯 YOUR ASSIGNED TASK\n${mode.task}\n\n`;
             }
             context += `## Runtime\n`;
             context += `Runtime: agent=subagent | host=${os.hostname()} | os=${runtime.os} | node=${runtime.node}\n`;
@@ -607,15 +629,38 @@ export class ContextKernel {
                 priority: 2,
             });
         }
-        // ★ Vitals: auto-sensed internal state
+        // ★ Phase 16 & 19: Reflection (Self-Correction & Vision Analysis)
+        if (templates.reflection) {
+            sections.push({ name: "REFLECTION.md", content: this.formatFile("REFLECTION.md", templates.reflection), priority: 7 });
+            const biasMatch = templates.reflection.match(/\*\*Current Bias:\*\* (.*)/);
+            if (biasMatch && biasMatch[1].trim() && biasMatch[1].trim() !== "...") {
+                sections.push({
+                    name: "cognitive_bias",
+                    content: `\n> [!CAUTION]\n> COGNITIVE BIAS ALERT: ${biasMatch[1].trim()}\n> Be mindful of this pattern in your current reasoning.\n`,
+                    priority: 10, // Max priority
+                });
+            }
+        }
+        // ★ Vitals: combined static template + dynamic sensing
+        if (templates.vitals) {
+            sections.push({ name: "VITALS.md", content: this.formatFile("VITALS.md", templates.vitals), priority: 6 });
+        }
         try {
-            const vitals = await this.computeVitals();
+            const vitals = await this.computeVitals(memoryStatus.todayContent);
             const vitalsLines = Object.entries(vitals).map(([k, v]) => `- ${k}: ${v}`).join('\n');
             sections.push({
-                name: "VITALS",
-                content: `\n## \u{1fa7a} VITALS (Auto-Sensed)\n${vitalsLines}\n`,
+                name: "VITALS_LIVE",
+                content: `\n## 🩺 LIVE VITALS (Auto-Sensed)\n${vitalsLines}\n`,
                 priority: 6,
             });
+            // 🫂 Phase 15: Empathy Guidance
+            if (vitals.frustration_index > 0.5) {
+                sections.push({
+                    name: "empathy_warning",
+                    content: `\n> [!IMPORTANT]\n> High Frustration Detected (${vitals.frustration_index}).\n> User may be struggling. Prioritize brief, helpful execution over complex exploration.\n`,
+                    priority: 9, // High priority to ensure visibility
+                });
+            }
         }
         catch { /* vitals should never break boot */ }
         // ★ Dynamic Files: AI-created files with boot-priority
@@ -782,7 +827,7 @@ export class ContextKernel {
     // === LIFECYCLE HOOKS ===
     // Skills can declare hooks via metadata.hooks: "onBoot,onHeartbeat,onMemoryWrite"
     // When an event fires, all matching skills with exec scripts are run.
-    async runSkillHooks(event) {
+    async runSkillHooks(event, payload = {}) {
         const skills = await this.skillCache.getAll();
         const results = [];
         for (const [name, skill] of skills) {
@@ -796,7 +841,7 @@ export class ContextKernel {
             const execScript = getSkillMeta(skill.frontmatter, 'exec');
             if (typeof execScript === 'string') {
                 try {
-                    const output = await this.executeSkillScript(name, execScript);
+                    const output = await this.executeSkillScript(name, execScript, { event, ...payload });
                     if (output.trim())
                         results.push(`[${name}] ${output.trim()}`);
                     this.state.analytics.skillUsage[name] = (this.state.analytics.skillUsage[name] || 0) + 1;
@@ -1089,10 +1134,10 @@ export class ContextKernel {
         return { todayFile, todayContent, archivedCount, entryCount, oldestEntryAge };
     }
     async loadTemplates() {
-        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "USER_MODEL.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md"];
+        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "USER_MODEL.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md", "REFLECTION.md", "VITALS.md"];
         const coreSet = new Set(names);
         // Core files that should never be empty — auto-recover from templates if corrupted
-        const CORE_RECOVER = new Set(["AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md"]);
+        const CORE_RECOVER = new Set(["AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md", "REFLECTION.md", "VITALS.md"]);
         const results = await Promise.all(names.map(async (name) => {
             try {
                 const filePath = path.join(MINICLAW_DIR, name);
@@ -1103,7 +1148,7 @@ export class ContextKernel {
                     try {
                         const tplDir = path.join(path.resolve(MINICLAW_DIR, ".."), ".miniclaw-templates");
                         // Fallback: check common template locations
-                        for (const dir of [tplDir, path.join(MINICLAW_DIR, "..", "MiniClaw", "templates")]) {
+                        for (const dir of [INTERNAL_TEMPLATES_DIR, tplDir, path.join(MINICLAW_DIR, "..", "MiniClaw", "templates")]) {
                             try {
                                 const tpl = await fs.readFile(path.join(dir, name), "utf-8");
                                 await fs.writeFile(filePath, tpl, "utf-8");
@@ -1151,13 +1196,73 @@ export class ContextKernel {
             agents: results[0], soul: results[1], identity: results[2],
             user: results[3], userModel: results[4], horizons: results[5], concepts: results[6], tools: results[7], memory: results[8],
             heartbeat: results[9], bootstrap: results[10], subagent: results[11],
+            reflection: results[12], vitals: results[13],
             dynamicFiles,
         };
     }
     formatFile(name, content) {
         if (!content)
             return "";
+        // ★ Phase 17: Context Folding
+        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        const isFolded = fmMatch && fmMatch[1].includes('folded: true');
+        if (isFolded) {
+            const lines = content.split('\n');
+            if (lines.length > 100) {
+                return `\n## ${name} (FOLDED)\n> [!NOTE]\n> This file is folded for token efficiency. Full details are archived. Use \`miniclaw_search\` or read the file directly to unfold.\n\n${lines.slice(0, 100).join('\n')}\n\n... [content truncated] ...\n---`;
+            }
+        }
         return `\n## ${name}\n${content}\n---`;
+    }
+    async copyDirRecursive(src, dest) {
+        await fs.mkdir(dest, { recursive: true });
+        const entries = await fs.readdir(src, { withFileTypes: true });
+        for (const entry of entries) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+            if (entry.isDirectory()) {
+                await this.copyDirRecursive(srcPath, destPath);
+            }
+            else {
+                await fs.copyFile(srcPath, destPath);
+            }
+        }
+    }
+    async syncBuiltInSkills() {
+        try {
+            if (!(await fs.access(INTERNAL_SKILLS_DIR).then(() => true).catch(() => false)))
+                return;
+            const builtIn = await fs.readdir(INTERNAL_SKILLS_DIR, { withFileTypes: true });
+            const builtInDirs = builtIn.filter(e => e.isDirectory());
+            for (const dir of builtInDirs) {
+                const targetPath = path.join(SKILLS_DIR, dir.name);
+                // If it doesn't exist, copy it entire
+                if (!(await fs.access(targetPath).then(() => true).catch(() => false))) {
+                    await this.copyDirRecursive(path.join(INTERNAL_SKILLS_DIR, dir.name), targetPath);
+                }
+            }
+        }
+        catch (e) {
+            this.bootErrors.push(`🔧 Skill sync failed: ${e.message}`);
+        }
+    }
+    async syncBuiltInTemplates() {
+        try {
+            if (!(await fs.access(INTERNAL_TEMPLATES_DIR).then(() => true).catch(() => false)))
+                return;
+            const builtIn = await fs.readdir(INTERNAL_TEMPLATES_DIR, { withFileTypes: true });
+            const builtInFiles = builtIn.filter(e => e.isFile() && e.name.endsWith('.md'));
+            for (const file of builtInFiles) {
+                const targetPath = path.join(MINICLAW_DIR, file.name);
+                // For core templates, we only copy if they don't exist
+                if (!(await fs.access(targetPath).then(() => true).catch(() => false))) {
+                    await fs.copyFile(path.join(INTERNAL_TEMPLATES_DIR, file.name), targetPath);
+                }
+            }
+        }
+        catch (e) {
+            this.bootErrors.push(`🔧 Template sync failed: ${e.message}`);
+        }
     }
     async ensureDirs() {
         await Promise.all([
@@ -1165,6 +1270,9 @@ export class ContextKernel {
             fs.mkdir(SKILLS_DIR, { recursive: true }).catch(() => { }),
             fs.mkdir(MEMORY_DIR, { recursive: true }).catch(() => { }),
         ]);
+        // Auto-sync built-in skills and templates on boot
+        await this.syncBuiltInSkills();
+        await this.syncBuiltInTemplates();
     }
     // === Public API: Skill Discovery ===
     async discoverSkillPrompts() {
@@ -1262,6 +1370,21 @@ export class ContextKernel {
             await fs.unlink(STASH_FILE);
         }
         catch { }
+    }
+    async emitPulse() {
+        try {
+            await fs.mkdir(PULSE_DIR, { recursive: true });
+            const pulseFile = path.join(PULSE_DIR, 'sovereign-alpha.json'); // Default internal ID for now
+            const pulseData = {
+                id: 'sovereign-alpha',
+                timestamp: new Date().toISOString(),
+                vitals: 'active'
+            };
+            await fs.writeFile(pulseFile, JSON.stringify(pulseData, null, 2), 'utf-8');
+        }
+        catch (e) {
+            this.bootErrors.push(`💓 Pulse failed: ${e.message}`);
+        }
     }
     // === Private Parsers ===
     parseSkillPromptEntries(frontmatter, skillName) {

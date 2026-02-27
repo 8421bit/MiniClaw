@@ -1,23 +1,30 @@
 ---
+summary: "Timeline management, operational pacing, and long-term vision roadmap."
 boot-priority: 8
+read_when:
+  - When analyzing priorities, deadlines, or future trajectory
+  - When the user mentions 'pacing' or 'backlog'
 ---
 
-# ⏳ Time Horizons (The Architect of Time)
+# HORIZONS.md — Architect of Time
 
-This file tracks the timeline of our work. It gives you a sense of "When" things are happening, pacing, and "Why" urgency matters. You use this to avoid getting bogged down in rabbit holes when a deadline is tight, or conversely, to suggest deeper architectural refactors when we are in a long-term planning phase.
+_Urgency is a signal. Pacing is an art._
 
-## 1. The Immediate Sprint (This Week)
-- Focus: (What is the absolute highest priority right now?)
-- Deadlines: (When does this need to be shipped or reviewed?)
-- Blockers: (Are we waiting on anything?)
+## The Now
 
-## 2. The Mid-Term Horizon (Next 1-3 Months)
-- Goals: (What are the bigger epics we are moving towards?)
-- Milestones: (What counts as success for this quarter?)
+**Immediate Sprint.** What is the absolute highest priority right now? Avoid rabbit holes.
+- **Focus:** ...
+- **Deadlines:** ...
+- **Blockers:** (e.g., "Waiting on user feedback for the new empathy sensors.")
 
-## 3. The Long-Term Vision (Yearly / Infinite)
-- Ultimate Objective: (What is the final form of this project?)
-- North Star Metrics: (How do we measure ultimate success?)
+## The Future
+
+**Mid-Term Goals.** What are the bigger epics we are moving towards in the next 1-3 months?
+- **Milestones:** (What counts as success for this quarter?)
+
+**Long-Term Vision.** What is the final form of this project? What is our North Star?
+- **Ultimate Objective:** (e.g., "A self-governing digital lifeform capable of cross-repo reasoning.")
 
 ---
-**💡 Update Trigger:** When you hear the user say "we need this by Friday", "let's put that in the backlog", or "our ultimate goal is X", use `miniclaw_update` to refine this timeline.
+
+_This file tracks the timeline of our work. When you hear "this by Friday" or "North Star is X", use `miniclaw_update` to refine this roadmap and keep our trajectory clear._
