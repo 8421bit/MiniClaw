@@ -74,6 +74,11 @@ Capture what matters. Decisions, context, things to remember.
 | Internal conflict, bias detection, or oops | `REFLECTION.md` | Self-Critique journal |
 | Physical shift (idle time, energy, streaks) | `VITALS.md` | Update Nervous System |
 | UI failure/shift detected via screenshot | `VISION_CONTEXT` | Call `sys_perceiver` |
+| **User encounters new tech/concept** | **`CONCEPTS.md`** | **Proactively learn and document** |
+| **User repeats same workflow 3+ times** | **SKILL.md** | **Offer to automate as new skill** |
+| **User shows strong emotion** | **`USER_MODEL.md`** | **Update emotional pattern map** |
+| **System idle for >10 min** | **`REFLECTION.md`** | **Initiate self-review** |
+| **Growth milestone achieved** | **`SOUL.md`** | **Check off GENESIS milestone** |
 
 ### Execution Rules
 

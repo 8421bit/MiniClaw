@@ -58,7 +58,9 @@ export function parseFrontmatter(content) {
         try {
             return JSON.parse(fmText);
         }
-        catch { }
+        catch (e) {
+            console.error(`[MiniClaw] Failed to parse frontmatter JSON: ${e}`);
+        }
     }
     const lines = match[1].split('\n');
     const result = {};

@@ -93,7 +93,8 @@ class SkillCache {
                         referenceFiles: refFiles.filter(f => f.endsWith('.md') || f.endsWith('.json')),
                     };
                 }
-                catch {
+                catch (e) {
+                    console.error(`[MiniClaw] Failed to load skill ${dir.name}: ${e}`);
                     return null;
                 }
             }));
@@ -102,7 +103,9 @@ class SkillCache {
                     newCache.set(result.name, result);
             }
         }
-        catch { /* skills dir doesn't exist yet */ }
+        catch (e) {
+            console.error(`[MiniClaw] Skills directory error: ${e}`); /* skills dir doesn't exist yet */
+        }
         this.cache = newCache;
         this.lastScanTime = Date.now();
     }
@@ -362,6 +365,14 @@ export class ContextKernel {
             });
         }
         const frustrationScore = Math.min(1.0, frustration / 10);
+        // growth_urge: detect stagnation (no new concepts learned in recent sessions)
+        let newConceptsCount = 0;
+        try {
+            const conceptsContent = await fs.readFile(path.join(MINICLAW_DIR, "CONCEPTS.md"), "utf-8");
+            // Count concepts added in last 5 sessions (rough estimate by file content size changes)
+            newConceptsCount = (conceptsContent.match(/^- \*\*/gm) || []).length;
+        }
+        catch { /* CONCEPTS.md doesn't exist yet */ }
         return {
             idle_hours: idleHours,
             session_streak: streak,
@@ -369,7 +380,37 @@ export class ContextKernel {
             total_sessions: analytics.bootCount,
             avg_boot_ms: avgBoot,
             frustration_index: frustrationScore,
+            new_concepts_learned: newConceptsCount,
         };
+    }
+    // ★ Growth Drive: evaluate and trigger growth urges
+    async evaluateGrowthUrge() {
+        const vitals = await this.computeVitals();
+        const analytics = this.state.analytics;
+        // Check for stagnation: high session streak but few new concepts
+        if (vitals.session_streak > 5 && vitals.new_concepts_learned < 2) {
+            return {
+                urge: 'stagnation',
+                message: "🌱 I feel stagnant. I've been active but haven't learned anything new recently. Teach me something?"
+            };
+        }
+        // Check for repeated actions (user might need automation)
+        const fileChanges = Object.values(analytics.fileChanges || {});
+        const maxRepeated = Math.max(0, ...fileChanges);
+        if (maxRepeated > 5) {
+            return {
+                urge: 'helpfulness',
+                message: "💡 I notice you've been working with the same files repeatedly. Shall I learn this workflow and help automate it?"
+            };
+        }
+        // Check for high frustration (opportunity to learn from mistakes)
+        if (vitals.frustration_index > 0.5) {
+            return {
+                urge: 'curiosity',
+                message: "🤔 I sense some frustration. What can I learn from this to help you better next time?"
+            };
+        }
+        return { urge: 'none' };
     }
     /**
      * Boot the kernel and assemble the context.
@@ -787,7 +828,9 @@ export class ContextKernel {
             try {
                 await fs.chmod(scriptPath, '755');
             }
-            catch { }
+            catch (e) {
+                console.error(`[MiniClaw] Failed to chmod script: ${e}`);
+            }
             cmd = `"${scriptPath}"`;
         }
         // Pass arguments as a serialized JSON string to avoiding escaping mayhem
@@ -1324,9 +1367,16 @@ export class ContextKernel {
     async getConfig() {
         try {
             const raw = await fs.readFile(CONFIG_FILE, "utf-8");
-            return JSON.parse(raw);
+            const parsed = JSON.parse(raw);
+            // Simple validation: ensure it's an object
+            if (typeof parsed !== 'object' || parsed === null) {
+                console.error('[MiniClaw] Invalid config format, using defaults');
+                return {};
+            }
+            return parsed;
         }
-        catch {
+        catch (e) {
+            console.error(`[MiniClaw] Config read error: ${e}`);
             return {};
         }
     }
@@ -1369,7 +1419,9 @@ export class ContextKernel {
         try {
             await fs.unlink(STASH_FILE);
         }
-        catch { }
+        catch (e) {
+            console.error(`[MiniClaw] Failed to clear stash: ${e}`);
+        }
     }
     async emitPulse() {
         try {
@@ -1384,6 +1436,16 @@ export class ContextKernel {
         }
         catch (e) {
             this.bootErrors.push(`💓 Pulse failed: ${e.message}`);
+        }
+    }
+    // === Write to HEARTBEAT.md for user visibility
+    async writeToHeartbeat(content) {
+        try {
+            const hbFile = path.join(MINICLAW_DIR, "HEARTBEAT.md");
+            await fs.appendFile(hbFile, content, "utf-8");
+        }
+        catch (e) {
+            console.error(`[MiniClaw] Failed to write to HEARTBEAT.md: ${e}`);
         }
     }
     // === Private Parsers ===
@@ -1437,13 +1499,18 @@ export class ContextKernel {
                     // For executable sub-tools, format as skill_xxx_yyy
                     const toolName = rawName ? `skill_${skillName}_${rawName}` : '';
                     if (toolName) {
-                        tools.push({
+                        const desc = vItem.description || `Skill tool: ${skillName}`;
+                        const execCmd = vItem.exec || defaultExecScript;
+                        const toolDecl = {
                             skillName,
                             toolName,
-                            description: vItem.description || `Skill tool: ${skillName}`,
-                            schema: vItem.schema,
-                            exec: vItem.exec || defaultExecScript
-                        });
+                            description: desc,
+                            exec: execCmd
+                        };
+                        if (vItem.schema) {
+                            toolDecl.schema = vItem.schema;
+                        }
+                        tools.push(toolDecl);
                     }
                 }
             }

@@ -2,7 +2,6 @@
 name: sys_reviewer
 description: "Automatically reviews newly created files to provide immediate feedback or categorization."
 metadata:
-  version: "0.7.0"
   exec: "node ./run.js"
   hooks:
     - name: onFileCreated

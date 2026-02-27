@@ -2,7 +2,6 @@
 name: sys_perceiver
 description: "Visual analysis and UI shift detection. Analyzes screenshots to detect regressions or build failures."
 metadata:
-  version: "0.7.0"
   exec: "node ./run.js"
   hooks:
     - name: onVision

@@ -1,6 +1,6 @@
 {
     "name": "miniclaw",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "description": "A minimalist micro-kernel agent with ACE, memory, skills, and cron scheduler — inspired by OpenClaw",
     "main": "dist/index.js",
     "type": "module",

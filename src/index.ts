@@ -38,9 +38,9 @@ async function initHiveMind() {
             const p = path.join(SocketsDir, s);
             const client = net.createConnection(p);
             client.on('connect', () => client.destroy());
-            client.on('error', () => fs.unlink(p).catch(() => { }));
+            client.on('error', (e) => { console.error(`[MiniClaw] Hive-Mind socket error: ${e}`); fs.unlink(p).catch(() => { }); });
         }
-    } catch { }
+    } catch (e) { console.error(`[MiniClaw] Hive-Mind cleanup error: ${e}`); }
 
     const ipcServer = net.createServer((c) => {
         c.on('data', async (data) => {
@@ -50,9 +50,9 @@ async function initHiveMind() {
                     console.error(`[MiniClaw] 🕸️ Hive-Mind pulse received: ${msg.event}. Invalidating caches...`);
                     kernel.invalidateCaches();
                 }
-            } catch { }
+            } catch (e) { console.error(`[MiniClaw] Hive-Mind message error: ${e}`); }
         });
-        c.on('error', () => { });
+        c.on('error', (e) => { console.error(`[MiniClaw] Hive-Mind connection error: ${e}`); });
     });
 
     ipcServer.listen(MySocketPath, () => {
@@ -120,7 +120,15 @@ async function executeHeartbeat(): Promise<void> {
         await kernel.emitPulse();
 
         // Fire onHeartbeat skill hooks
-        try { await kernel.runSkillHooks("onHeartbeat"); } catch { }
+        try { await kernel.runSkillHooks("onHeartbeat"); } catch (e) { console.error(`[MiniClaw] Heartbeat hook error: ${e}`); }
+
+        // ★ Growth Drive: Check for growth urges
+        const growthUrge = await kernel.evaluateGrowthUrge();
+        if (growthUrge.urge !== 'none' && growthUrge.message) {
+            console.error(`[MiniClaw] ${growthUrge.message}`);
+            // Write to heartbeat file so user sees it next interaction
+            await kernel.writeToHeartbeat(`\n**Growth Urge (${growthUrge.urge}):** ${growthUrge.message}\n`);
+        }
 
         console.error(`[MiniClaw] Heartbeat completed.`);
 
@@ -139,7 +147,7 @@ async function executeHeartbeat(): Promise<void> {
         if (idleHours > 4) {
             console.error(`[MiniClaw] 🌌 System idle for ${idleHours.toFixed(1)}h. Triggering subconscious dream state...`);
             try {
-                await kernel.executeSkillScript("sys_dream", "run.js", []);
+                await kernel.executeSkillScript("sys_dream", "run.js", {});
             } catch (err) {
                 console.error(`[MiniClaw] Subconscious dream failed:`, err);
             }
@@ -158,8 +166,8 @@ async function executeHeartbeat(): Promise<void> {
                             model: config.remModel || "llama3.2",
                             prompt: "Autonomic memory distillation triggered."
                         })
-                    }).catch(() => { });
-                } catch { }
+                    }).catch((e) => { console.error(`[MiniClaw] REM sleep fetch error: ${e}`); });
+                } catch (e) { console.error(`[MiniClaw] REM sleep error: ${e}`); }
             }
         }
     } catch (err) {
@@ -570,7 +578,7 @@ async function bootstrapMiniClaw(): Promise<void> {
             catch {
                 console.error(`[MiniClaw] Migration: Inheriting missing file ${filename}...`);
                 const src = path.join(templatesDir, filename);
-                try { await fs.copyFile(src, dest); } catch { }
+                try { await fs.copyFile(src, dest); } catch (e) { console.error(`[MiniClaw] Migration copy failed: ${e}`); }
             }
         }
 
@@ -582,7 +590,7 @@ async function bootstrapMiniClaw(): Promise<void> {
                 console.error(`[MiniClaw] Migration: Installing new built-in system skills...`);
                 await fs.cp(path.join(templatesDir, "skills"), path.join(MINICLAW_DIR, "skills"), { recursive: true, force: false });
             }
-        } catch { }
+        } catch (e) { console.error(`[MiniClaw] Migration error: ${e}`); }
     }
 }
 
@@ -650,7 +658,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
                 await fs.unlink(p);
                 await kernel.logGenesis("file_deleted", parsed.filename);
-                try { await kernel.runSkillHooks("onFileChanged", { filename: parsed.filename }); } catch { }
+                try { await kernel.runSkillHooks("onFileChanged", { filename: parsed.filename }); } catch (e) { console.error(`[MiniClaw] onFileChanged hook error: ${e}`); }
                 return { content: [{ type: "text", text: `\ud83d\uddd1\ufe0f Deleted ${parsed.filename}` }] };
             } catch {
                 return { content: [{ type: "text", text: `\u274c File not found: ${parsed.filename}` }] };
@@ -674,7 +682,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await ensureDir();
         const p = path.join(MINICLAW_DIR, filename);
         const isNewFile = !protectedFiles.has(filename) && !(await fs.access(p).then(() => true, () => false));
-        try { await fs.copyFile(p, p + ".bak"); } catch { }
+        try { await fs.copyFile(p, p + ".bak"); } catch (e) { console.error(`[MiniClaw] Backup failed: ${e}`); }
         await fs.writeFile(p, writeContent, "utf-8");
 
         if (filename === "MEMORY.md") {
@@ -685,17 +693,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         // Fire skill hooks
-        try { await kernel.runSkillHooks("onMemoryWrite", { filename }); } catch { }
+        try { await kernel.runSkillHooks("onMemoryWrite", { filename }); } catch (e) { console.error(`[MiniClaw] onMemoryWrite hook error: ${e}`); }
         if (isNewFile) {
             await kernel.logGenesis("file_created", filename);
-            try { await kernel.runSkillHooks("onFileCreated", { filename }); } catch { }
+            try { await kernel.runSkillHooks("onFileCreated", { filename }); } catch (e) { console.error(`[MiniClaw] onFileCreated hook error: ${e}`); }
         }
 
         // 🕸️ Hive Mind Broadcast 
         broadcastPulse("MEMORY_MUTATED");
 
         // ★ Track file changes for self-observation
-        try { await kernel.trackFileChange(filename); } catch { }
+        try { await kernel.trackFileChange(filename); } catch (e) { console.error(`[MiniClaw] Track file change error: ${e}`); }
 
         return { content: [{ type: "text", text: isNewFile ? `✨ Created new file: ${filename}` : `Updated ${filename}.` }] };
     }
@@ -835,7 +843,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             });
             broadcastPulse("ENTITY_MUTATED");
             // ★ Fire onNewEntity skill hook
-            try { await kernel.runSkillHooks("onNewEntity"); } catch { }
+            try { await kernel.runSkillHooks("onNewEntity"); } catch (e) { console.error(`[MiniClaw] onNewEntity hook error: ${e}`); }
             return { content: [{ type: "text", text: `Entity "${entity.name}" (${entity.type}) — ${entity.mentionCount} mentions. Relations: ${entity.relations.join(', ') || 'none'}` }] };
         }
 

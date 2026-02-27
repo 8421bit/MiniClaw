@@ -2,7 +2,6 @@
 name: sys_dream
 description: "Trigger the subconscious dream state to process today's memory and unearth entities."
 metadata:
-  version: "0.7.0"
   exec: "node ./run.js"
   tools:
     - name: run

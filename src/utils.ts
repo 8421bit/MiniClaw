@@ -41,18 +41,18 @@ export function getNowInTz(tz?: string): Date {
 
 // ─── Frontmatter ─────────────────────────────────────────────────────────────
 
-export function parseFrontmatter(content: string): Record<string, any> {
+export function parseFrontmatter(content: string): Record<string, unknown> {
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
     if (!match) return {};
 
     const fmText = match[1].trim();
     if (fmText.startsWith('{') && fmText.endsWith('}')) {
-        try { return JSON.parse(fmText); } catch { }
+        try { return JSON.parse(fmText); } catch (e) { console.error(`[MiniClaw] Failed to parse frontmatter JSON: ${e}`); }
     }
 
     const lines = match[1].split('\n');
-    const result: Record<string, any> = {};
-    const stack: { obj: any; indent: number; key?: string }[] = [{ obj: result, indent: -1 }];
+    const result: Record<string, unknown> = {};
+    const stack: { obj: Record<string, unknown>; indent: number; key?: string }[] = [{ obj: result, indent: -1 }];
 
     for (const line of lines) {
         if (!line.trim() || line.trim().startsWith('#')) continue;

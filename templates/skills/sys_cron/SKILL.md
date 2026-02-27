@@ -2,7 +2,6 @@
 name: sys_cron
 description: "【定时任务管理器 (Cron Jobs)】查看、添加、删除和启停 MiniClaw 的定时系统脉冲。"
 metadata:
-  version: "0.7.0"
   exec: "node ./run.js"
   tools:
     - "run: Cron (action: list|add|remove|toggle, id, name, cron, text, tz)"

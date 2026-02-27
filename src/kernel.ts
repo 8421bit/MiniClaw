@@ -227,12 +227,12 @@ class SkillCache {
                         files: files.filter(f => f.endsWith('.md') || f.endsWith('.json')),
                         referenceFiles: refFiles.filter(f => f.endsWith('.md') || f.endsWith('.json')),
                     } as SkillCacheEntry;
-                } catch { return null; }
+                } catch (e) { console.error(`[MiniClaw] Failed to load skill ${dir.name}: ${e}`); return null; }
             }));
             for (const result of results) {
                 if (result) newCache.set(result.name, result);
             }
-        } catch { /* skills dir doesn't exist yet */ }
+        } catch (e) { console.error(`[MiniClaw] Skills directory error: ${e}`); /* skills dir doesn't exist yet */ }
         this.cache = newCache;
         this.lastScanTime = Date.now();
     }
@@ -505,6 +505,14 @@ export class ContextKernel {
         }
         const frustrationScore = Math.min(1.0, frustration / 10);
 
+        // growth_urge: detect stagnation (no new concepts learned in recent sessions)
+        let newConceptsCount = 0;
+        try {
+            const conceptsContent = await fs.readFile(path.join(MINICLAW_DIR, "CONCEPTS.md"), "utf-8");
+            // Count concepts added in last 5 sessions (rough estimate by file content size changes)
+            newConceptsCount = (conceptsContent.match(/^- \*\*/gm) || []).length;
+        } catch { /* CONCEPTS.md doesn't exist yet */ }
+
         return {
             idle_hours: idleHours,
             session_streak: streak,
@@ -512,7 +520,42 @@ export class ContextKernel {
             total_sessions: analytics.bootCount,
             avg_boot_ms: avgBoot,
             frustration_index: frustrationScore,
+            new_concepts_learned: newConceptsCount,
         };
+    }
+
+    // ★ Growth Drive: evaluate and trigger growth urges
+    async evaluateGrowthUrge(): Promise<{ urge: 'none' | 'curiosity' | 'stagnation' | 'helpfulness'; message?: string }> {
+        const vitals = await this.computeVitals();
+        const analytics = this.state.analytics;
+
+        // Check for stagnation: high session streak but few new concepts
+        if ((vitals.session_streak as number) > 5 && (vitals.new_concepts_learned as number) < 2) {
+            return { 
+                urge: 'stagnation', 
+                message: "🌱 I feel stagnant. I've been active but haven't learned anything new recently. Teach me something?" 
+            };
+        }
+
+        // Check for repeated actions (user might need automation)
+        const fileChanges = Object.values(analytics.fileChanges || {});
+        const maxRepeated = Math.max(0, ...fileChanges);
+        if (maxRepeated > 5) {
+            return { 
+                urge: 'helpfulness', 
+                message: "💡 I notice you've been working with the same files repeatedly. Shall I learn this workflow and help automate it?" 
+            };
+        }
+
+        // Check for high frustration (opportunity to learn from mistakes)
+        if ((vitals.frustration_index as number) > 0.5) {
+            return { 
+                urge: 'curiosity', 
+                message: "🤔 I sense some frustration. What can I learn from this to help you better next time?" 
+            };
+        }
+
+        return { urge: 'none' };
     }
 
     /**
@@ -954,7 +997,7 @@ export class ContextKernel {
 
     // === EXEC: Executable Skills ===
 
-    async executeSkillScript(skillName: string, scriptFile: string, args: any = {}): Promise<string> {
+    async executeSkillScript(skillName: string, scriptFile: string, args: Record<string, unknown> = {}): Promise<string> {
         const scriptPath = path.join(SKILLS_DIR, skillName, scriptFile);
 
         // 1. Ensure file exists
@@ -970,7 +1013,7 @@ export class ContextKernel {
             cmd = `node "${scriptPath}"`;
         } else {
             // Try making it executable
-            try { await fs.chmod(scriptPath, '755'); } catch { }
+            try { await fs.chmod(scriptPath, '755'); } catch (e) { console.error(`[MiniClaw] Failed to chmod script: ${e}`); }
             cmd = `"${scriptPath}"`;
         }
 
@@ -1014,7 +1057,7 @@ export class ContextKernel {
     // Skills can declare hooks via metadata.hooks: "onBoot,onHeartbeat,onMemoryWrite"
     // When an event fires, all matching skills with exec scripts are run.
 
-    async runSkillHooks(event: string, payload: any = {}): Promise<string[]> {
+    async runSkillHooks(event: string, payload: Record<string, unknown> = {}): Promise<string[]> {
         const skills = await this.skillCache.getAll();
         const results: string[] = [];
 
@@ -1542,8 +1585,15 @@ export class ContextKernel {
     async getConfig(): Promise<MiniClawConfig> {
         try {
             const raw = await fs.readFile(CONFIG_FILE, "utf-8");
-            return JSON.parse(raw);
-        } catch {
+            const parsed = JSON.parse(raw);
+            // Simple validation: ensure it's an object
+            if (typeof parsed !== 'object' || parsed === null) {
+                console.error('[MiniClaw] Invalid config format, using defaults');
+                return {};
+            }
+            return parsed;
+        } catch (e) {
+            console.error(`[MiniClaw] Config read error: ${e}`);
             return {};
         }
     }
@@ -1583,13 +1633,13 @@ export class ContextKernel {
         } catch { return null; }
     }
 
-    async writeStash(data: Record<string, any>): Promise<void> {
+    async writeStash(data: Record<string, unknown>): Promise<void> {
         await fs.mkdir(MINICLAW_DIR, { recursive: true });
         await fs.writeFile(STASH_FILE, JSON.stringify(data, null, 2), 'utf-8');
     }
 
     async clearStash(): Promise<void> {
-        try { await fs.unlink(STASH_FILE); } catch { }
+        try { await fs.unlink(STASH_FILE); } catch (e) { console.error(`[MiniClaw] Failed to clear stash: ${e}`); }
     }
 
     async emitPulse(): Promise<void> {
@@ -1604,6 +1654,16 @@ export class ContextKernel {
             await fs.writeFile(pulseFile, JSON.stringify(pulseData, null, 2), 'utf-8');
         } catch (e) {
             this.bootErrors.push(`💓 Pulse failed: ${(e as Error).message}`);
+        }
+    }
+
+    // === Write to HEARTBEAT.md for user visibility
+    async writeToHeartbeat(content: string): Promise<void> {
+        try {
+            const hbFile = path.join(MINICLAW_DIR, "HEARTBEAT.md");
+            await fs.appendFile(hbFile, content, "utf-8");
+        } catch (e) {
+            console.error(`[MiniClaw] Failed to write to HEARTBEAT.md: ${e}`);
         }
     }
 
@@ -1622,8 +1682,8 @@ export class ContextKernel {
                         prompts.push({ skillName, promptName: `skill:${skillName}:${promptName}`, description });
                     }
                 } else if (typeof item === 'object' && item !== null) {
-                    const promptName = (item as any).name;
-                    const description = (item as any).description || `Skill: ${skillName}`;
+                    const promptName = (item as Record<string, unknown>).name as string;
+                    const description = ((item as Record<string, unknown>).description as string) || `Skill: ${skillName}`;
                     if (promptName) {
                         prompts.push({ skillName, promptName: `skill:${skillName}:${promptName}`, description });
                     }
@@ -1653,19 +1713,24 @@ export class ContextKernel {
                         tools.push({ skillName, toolName: `skill_${skillName}_${toolName}`, description, exec: defaultExecScript });
                     }
                 } else if (typeof item === 'object' && item !== null) {
-                    const vItem = item as any;
-                    const rawName = vItem.name;
+                    const vItem = item as Record<string, unknown>;
+                    const rawName = vItem.name as string | undefined;
                     console.error("DEBUG yaml vItem:", JSON.stringify(vItem));
                     // For executable sub-tools, format as skill_xxx_yyy
                     const toolName = rawName ? `skill_${skillName}_${rawName}` : '';
                     if (toolName) {
-                        tools.push({
+                        const desc = (vItem.description as string | undefined) || `Skill tool: ${skillName}`;
+                        const execCmd = (vItem.exec as string | undefined) || defaultExecScript;
+                        const toolDecl: SkillToolDeclaration = {
                             skillName,
                             toolName,
-                            description: vItem.description || `Skill tool: ${skillName}`,
-                            schema: vItem.schema,
-                            exec: vItem.exec || defaultExecScript
-                        });
+                            description: desc,
+                            exec: execCmd
+                        };
+                        if (vItem.schema) {
+                            toolDecl.schema = vItem.schema as Record<string, unknown>;
+                        }
+                        tools.push(toolDecl);
                     }
                 }
             }

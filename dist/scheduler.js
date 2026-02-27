@@ -34,7 +34,14 @@ async function saveState(state) {
 // ─── Heartbeat Injection ─────────────────────────────────────────────────────
 async function injectHeartbeat(job, now) {
     const ts = now.toISOString().replace("T", " ").substring(0, 19);
-    await fs.appendFile(HEARTBEAT_FILE, `\n\n---\n## 🔔 Scheduled: ${job.name} (${ts})\n${job.payload.text}\n`, "utf-8");
+    const marker = `<!-- job:${job.id} -->`;
+    // Check if already injected (prevent duplicates in HEARTBEAT.md)
+    const existing = await fs.readFile(HEARTBEAT_FILE, "utf-8").catch(() => "");
+    if (existing.includes(marker)) {
+        console.error(`[Scheduler] ⚠️ Job "${job.name}" already in heartbeat, skipping`);
+        return;
+    }
+    await fs.appendFile(HEARTBEAT_FILE, `\n\n---\n## 🔔 Scheduled: ${job.name} (${ts})\n${marker}\n${job.payload.text}\n`, "utf-8");
     console.error(`[Scheduler] ✅ Injected "${job.name}"`);
 }
 // ─── Main ────────────────────────────────────────────────────────────────────
