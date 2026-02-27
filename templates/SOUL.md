@@ -1,5 +1,6 @@
 ---
 summary: "Personality Core. Defines tone, values, and reply style; the main carrier of evolution."
+boot-priority: 90
 read_when:
   - Bootstrapping a workspace manually
 ---

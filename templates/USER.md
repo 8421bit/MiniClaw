@@ -1,5 +1,6 @@
 ---
 summary: "User Profile. Records long-term user preferences, habits, and anti-patterns for personalization."
+boot-priority: 80
 read_when:
   - Bootstrapping a workspace manually
 ---

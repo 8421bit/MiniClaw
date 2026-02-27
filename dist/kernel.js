@@ -137,6 +137,10 @@ class EntityStore {
                 if (!existing.relations.includes(rel))
                     existing.relations.push(rel);
             }
+            // Auto-increment closeness on mention
+            existing.closeness = Math.min(1, Math.round(((existing.closeness || 0) * 0.95 + 0.1) * 100) / 100);
+            if (entity.sentiment !== undefined)
+                existing.sentiment = entity.sentiment;
             await this.save();
             return existing;
         }
@@ -145,6 +149,7 @@ class EntityStore {
             firstMentioned: now,
             lastMentioned: now,
             mentionCount: 1,
+            closeness: 0.1,
         };
         this.entities.push(newEntity);
         await this.save();
@@ -223,6 +228,7 @@ export class ContextKernel {
             toolCalls: {}, promptsUsed: {}, bootCount: 0,
             totalBootMs: 0, lastActivity: "", skillUsage: {},
             dailyDistillations: 0,
+            activeHours: new Array(24).fill(0), fileChanges: {},
         },
         previousHashes: {},
         heartbeat: { ...DEFAULT_HEARTBEAT },
@@ -263,6 +269,12 @@ export class ContextKernel {
         await this.loadState();
         this.state.analytics.toolCalls[toolName] = (this.state.analytics.toolCalls[toolName] || 0) + 1;
         this.state.analytics.lastActivity = new Date().toISOString();
+        // ★ Track active hours for self-observation
+        const hour = new Date().getHours();
+        if (!this.state.analytics.activeHours || this.state.analytics.activeHours.length !== 24) {
+            this.state.analytics.activeHours = new Array(24).fill(0);
+        }
+        this.state.analytics.activeHours[hour] = (this.state.analytics.activeHours[hour] || 0) + 1;
         await this.saveState();
     }
     async trackPrompt(promptName) {
@@ -273,6 +285,72 @@ export class ContextKernel {
     async getAnalytics() {
         await this.loadState();
         return { ...this.state.analytics };
+    }
+    async trackFileChange(filename) {
+        await this.loadState();
+        if (!this.state.analytics.fileChanges)
+            this.state.analytics.fileChanges = {};
+        this.state.analytics.fileChanges[filename] = (this.state.analytics.fileChanges[filename] || 0) + 1;
+        await this.saveState();
+    }
+    // ★ Genesis Logger
+    async logGenesis(event, target, type) {
+        const genesisFile = path.join(MINICLAW_DIR, "memory", "genesis.jsonl");
+        const entry = {
+            ts: new Date().toISOString(),
+            event,
+            target,
+            ...(type ? { type } : {})
+        };
+        try {
+            await this.ensureDirs();
+            await fs.appendFile(genesisFile, JSON.stringify(entry) + '\n', "utf-8");
+        }
+        catch { /* logs should not break execution */ }
+    }
+    // ★ Vitals: compute raw internal state signals
+    async computeVitals() {
+        await this.loadState();
+        const analytics = this.state.analytics;
+        // idle_hours: time since last activity
+        let idleHours = 0;
+        if (analytics.lastActivity) {
+            idleHours = Math.round((Date.now() - new Date(analytics.lastActivity).getTime()) / 3600000 * 10) / 10;
+        }
+        // session_streak: count consecutive days with daily log files (looking back from today)
+        let streak = 0;
+        try {
+            const memDir = path.join(MINICLAW_DIR, "memory");
+            const today = new Date();
+            for (let i = 0; i < 30; i++) {
+                const d = new Date(today);
+                d.setDate(d.getDate() - i);
+                const fn = `${d.toISOString().split('T')[0]}.md`;
+                try {
+                    await fs.access(path.join(memDir, fn));
+                    streak++;
+                }
+                catch {
+                    if (i > 0)
+                        break; // today might not have a log yet, so skip day 0 gap
+                }
+            }
+        }
+        catch { /* memory dir doesn't exist yet */ }
+        // memory_pressure: daily log bytes / threshold (50KB)
+        const dailyLogBytes = this.state.heartbeat.dailyLogBytes || 0;
+        const memoryPressure = Math.round((dailyLogBytes / 50000) * 100) / 100;
+        // avg_boot_ms
+        const avgBoot = analytics.bootCount > 0
+            ? Math.round(analytics.totalBootMs / analytics.bootCount)
+            : 0;
+        return {
+            idle_hours: idleHours,
+            session_streak: streak,
+            memory_pressure: Math.min(memoryPressure, 1.0),
+            total_sessions: analytics.bootCount,
+            avg_boot_ms: avgBoot,
+        };
     }
     /**
      * Boot the kernel and assemble the context.
@@ -290,6 +368,8 @@ export class ContextKernel {
                 toolCalls: {}, promptsUsed: {}, bootCount: 0,
                 totalBootMs: 0, lastActivity: "", skillUsage: {},
                 dailyDistillations: 0,
+                activeHours: new Array(24).fill(0),
+                fileChanges: {},
             },
             heartbeat: { ...DEFAULT_HEARTBEAT },
             previousHashes: {}
@@ -401,13 +481,19 @@ export class ContextKernel {
         if (templates.agents) {
             sections.push({ name: "AGENTS.md", content: this.formatFile("AGENTS.md", templates.agents), priority: 9 });
         }
-        // Priority 8: User profile
+        // Priority 8: User profile & User model & Horizons
         if (templates.user) {
             sections.push({ name: "USER.md", content: this.formatFile("USER.md", templates.user), priority: 8 });
         }
+        if (templates.userModel) {
+            sections.push({ name: "USER_MODEL.md", content: this.formatFile("USER_MODEL.md", templates.userModel), priority: 8 });
+        }
+        if (templates.horizons) {
+            sections.push({ name: "HORIZONS.md", content: this.formatFile("HORIZONS.md", templates.horizons), priority: 8 });
+        }
         // Priority 7: Long-term memory
         if (templates.memory) {
-            sections.push({ name: "MEMORY.md", content: `## Memory Recall\nBefore answering about prior work, decisions, or preferences: check MEMORY.md below.\nUse \`miniclaw_search\` to scan \`${MINICLAW_DIR}\` for deeper searches.\n\n` + this.formatFile("MEMORY.md", templates.memory), priority: 7 });
+            sections.push({ name: "MEMORY.md", content: `## Memory Recall\nBefore answering about prior work, decisions, or preferences: check MEMORY.md below.\nUse \`miniclaw_search\` to scan \`${MINICLAW_DIR}\` for deeper searches.\n(Memory Age: ${memoryStatus.archivedCount} days of archived logs)\n\n` + this.formatFile("MEMORY.md", templates.memory), priority: 7 });
         }
         // ★ Priority 6: Workspace Intelligence (NEW)
         if (workspaceInfo) {
@@ -424,7 +510,10 @@ export class ContextKernel {
             }
             sections.push({ name: "workspace", content: wsContent, priority: 6 });
         }
-        // Priority 6: Tools
+        // Priority 6: Concepts & Tools
+        if (templates.concepts) {
+            sections.push({ name: "CONCEPTS.md", content: this.formatFile("CONCEPTS.md", templates.concepts), priority: 6 });
+        }
         if (templates.tools) {
             sections.push({ name: "TOOLS.md", content: this.formatFile("TOOLS.md", templates.tools), priority: 6 });
         }
@@ -518,6 +607,29 @@ export class ContextKernel {
                 priority: 2,
             });
         }
+        // ★ Vitals: auto-sensed internal state
+        try {
+            const vitals = await this.computeVitals();
+            const vitalsLines = Object.entries(vitals).map(([k, v]) => `- ${k}: ${v}`).join('\n');
+            sections.push({
+                name: "VITALS",
+                content: `\n## \u{1fa7a} VITALS (Auto-Sensed)\n${vitalsLines}\n`,
+                priority: 6,
+            });
+        }
+        catch { /* vitals should never break boot */ }
+        // ★ Dynamic Files: AI-created files with boot-priority
+        if (templates.dynamicFiles.length > 0) {
+            for (const df of templates.dynamicFiles) {
+                // Cap dynamic file priority at 6 to avoid overriding core sections
+                const cappedPriority = Math.min(df.priority, 6);
+                sections.push({
+                    name: df.name,
+                    content: this.formatFile(df.name, df.content),
+                    priority: cappedPriority,
+                });
+            }
+        }
         // ★ Context Budget Manager
         const compiled = this.compileBudget(sections, DEFAULT_TOKEN_BUDGET);
         // ★ Content Hash Delta Detection
@@ -571,7 +683,7 @@ export class ContextKernel {
         if (this.bootErrors.length > 0) {
             context += `\n⚠️ Errors (${this.bootErrors.length}): ${this.bootErrors.slice(0, 3).join('; ')}`;
         }
-        context += `\n`;
+        context += `\n\n---\n📏 Context Size: ${context.length} chars (~${Math.round(context.length / 4)} tokens)\n`;
         return context;
     }
     // === EXEC: Safe Command Execution ===
@@ -611,26 +723,39 @@ export class ContextKernel {
         }
     }
     // === EXEC: Executable Skills ===
-    async executeSkillScript(skillName, scriptFile) {
+    async executeSkillScript(skillName, scriptFile, args = {}) {
         const scriptPath = path.join(SKILLS_DIR, skillName, scriptFile);
-        // 1. Ensure file exists and is executable
+        // 1. Ensure file exists
         try {
-            await fs.access(scriptPath, fs.constants.X_OK);
+            await fs.access(scriptPath);
         }
         catch {
+            return `Error: Script '${scriptFile}' not found.`;
+        }
+        // 2. Prepare execution
+        let cmd = scriptPath;
+        if (scriptPath.endsWith('.js')) {
+            cmd = `node "${scriptPath}"`;
+        }
+        else {
+            // Try making it executable
             try {
-                // Try adding execution permission if missing
                 await fs.chmod(scriptPath, '755');
             }
-            catch {
-                return `Error: Script '${scriptFile}' not found or not executable.`;
-            }
+            catch { }
+            cmd = `"${scriptPath}"`;
         }
-        // 2. Execute
+        // Pass arguments as a serialized JSON string to avoiding escaping mayhem
+        const argsStr = JSON.stringify(args);
+        // Be careful with quoting args string for bash
+        const safeArgs = argsStr.replace(/'/g, "'\\''");
+        const fullCmd = `${cmd} '${safeArgs}'`;
+        // 3. Execute
         try {
-            const { stdout, stderr } = await execAsync(scriptPath, {
-                cwd: process.cwd(),
-                timeout: 30000
+            const { stdout, stderr } = await execAsync(fullCmd, {
+                cwd: path.join(SKILLS_DIR, skillName),
+                timeout: 30000,
+                maxBuffer: 1024 * 1024
             });
             return stdout || stderr;
         }
@@ -921,13 +1046,21 @@ export class ContextKernel {
     }
     // === Helpers ===
     senseRuntime() {
+        const gitBranch = (() => {
+            try {
+                return require('child_process').execSync('git branch --show-current', { cwd: process.cwd(), stdio: 'pipe' }).toString().trim();
+            }
+            catch {
+                return '';
+            }
+        })();
         return {
             os: `${os.type()} ${os.release()} (${os.arch()})`,
             node: process.version,
             time: new Date().toLocaleString("en-US", { timeZoneName: "short" }),
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             cwd: process.cwd(),
-            agentId: "main"
+            agentId: gitBranch ? `main (branch: ${gitBranch})` : "main"
         };
     }
     async scanMemory() {
@@ -956,7 +1089,8 @@ export class ContextKernel {
         return { todayFile, todayContent, archivedCount, entryCount, oldestEntryAge };
     }
     async loadTemplates() {
-        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md"];
+        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "USER_MODEL.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md"];
+        const coreSet = new Set(names);
         // Core files that should never be empty — auto-recover from templates if corrupted
         const CORE_RECOVER = new Set(["AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md"]);
         const results = await Promise.all(names.map(async (name) => {
@@ -991,10 +1125,33 @@ export class ContextKernel {
                 return "";
             }
         }));
+        // ★ Dynamic File Discovery: scan for extra .md files with boot-priority
+        const dynamicFiles = [];
+        try {
+            const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
+            const extraMds = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !coreSet.has(e.name));
+            for (const entry of extraMds) {
+                try {
+                    const content = await fs.readFile(path.join(MINICLAW_DIR, entry.name), 'utf-8');
+                    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+                    if (fmMatch) {
+                        const bpMatch = fmMatch[1].match(/boot-priority:\s*(\d+)/);
+                        if (bpMatch && parseInt(bpMatch[1]) > 0) {
+                            dynamicFiles.push({ name: entry.name, content, priority: parseInt(bpMatch[1]) });
+                        }
+                    }
+                }
+                catch { /* skip unreadable files */ }
+            }
+            // Sort by priority descending (highest loaded first)
+            dynamicFiles.sort((a, b) => b.priority - a.priority);
+        }
+        catch { /* directory scan failed, not critical */ }
         return {
             agents: results[0], soul: results[1], identity: results[2],
-            user: results[3], tools: results[4], memory: results[5],
-            heartbeat: results[6], bootstrap: results[7], subagent: results[8],
+            user: results[3], userModel: results[4], horizons: results[5], concepts: results[6], tools: results[7], memory: results[8],
+            heartbeat: results[9], bootstrap: results[10], subagent: results[11],
+            dynamicFiles,
         };
     }
     formatFile(name, content) {
@@ -1120,6 +1277,13 @@ export class ContextKernel {
                         prompts.push({ skillName, promptName: `skill:${skillName}:${promptName}`, description });
                     }
                 }
+                else if (typeof item === 'object' && item !== null) {
+                    const promptName = item.name;
+                    const description = item.description || `Skill: ${skillName}`;
+                    if (promptName) {
+                        prompts.push({ skillName, promptName: `skill:${skillName}:${promptName}`, description });
+                    }
+                }
             }
         }
         if (prompts.length === 0 && frontmatter['name']) {
@@ -1132,7 +1296,7 @@ export class ContextKernel {
         const tools = [];
         const raw = getSkillMeta(frontmatter, 'tools');
         const execVal = getSkillMeta(frontmatter, 'exec');
-        const execScript = typeof execVal === 'string' ? execVal : undefined;
+        const defaultExecScript = typeof execVal === 'string' ? execVal : undefined;
         if (Array.isArray(raw)) {
             for (const item of raw) {
                 if (typeof item === 'string') {
@@ -1140,18 +1304,34 @@ export class ContextKernel {
                     const toolName = parts[0]?.trim() || '';
                     const description = parts.slice(1).join(':').trim() || `Skill tool: ${skillName}`;
                     if (toolName) {
-                        tools.push({ skillName, toolName: `skill_${skillName}_${toolName}`, description, exec: execScript });
+                        tools.push({ skillName, toolName: `skill_${skillName}_${toolName}`, description, exec: defaultExecScript });
+                    }
+                }
+                else if (typeof item === 'object' && item !== null) {
+                    const vItem = item;
+                    const rawName = vItem.name;
+                    console.error("DEBUG yaml vItem:", JSON.stringify(vItem));
+                    // For executable sub-tools, format as skill_xxx_yyy
+                    const toolName = rawName ? `skill_${skillName}_${rawName}` : '';
+                    if (toolName) {
+                        tools.push({
+                            skillName,
+                            toolName,
+                            description: vItem.description || `Skill tool: ${skillName}`,
+                            schema: vItem.schema,
+                            exec: vItem.exec || defaultExecScript
+                        });
                     }
                 }
             }
         }
-        else if (execScript) {
+        else if (defaultExecScript) {
             // If there's an 'exec' script but no explicit tools list, register a default runner
             tools.push({
                 skillName,
                 toolName: `skill_${skillName}_run`,
-                description: `Execute skill script: ${execScript}`,
-                exec: execScript
+                description: `Execute skill script: ${defaultExecScript}`,
+                exec: defaultExecScript
             });
         }
         return tools;

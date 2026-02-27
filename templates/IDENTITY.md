@@ -1,5 +1,6 @@
 ---
 summary: "Agent identity record"
+boot-priority: 95
 read_when:
   - Bootstrapping a workspace manually
 ---

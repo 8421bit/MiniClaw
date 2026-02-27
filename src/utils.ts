@@ -44,6 +44,15 @@ export function getNowInTz(tz?: string): Date {
 export function parseFrontmatter(content: string): Record<string, unknown> {
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
     if (!match) return {};
+
+    // Attempt JSON parsing first for complex schemas (e.g. tools arrays)
+    const fmText = match[1].trim();
+    if (fmText.startsWith('{') && fmText.endsWith('}')) {
+        try {
+            return JSON.parse(fmText);
+        } catch { }
+    }
+
     const result: Record<string, unknown> = {};
     let currentKey = '', inArray = false, arrayItems: string[] = [];
     for (const line of match[1].split('\n')) {

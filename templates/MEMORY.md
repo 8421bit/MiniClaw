@@ -1,5 +1,6 @@
 ---
 summary: "Long-term Memory. Stores distilled high-value facts and decisions; loaded only in main sessions."
+boot-priority: 75
 read_when:
   - Main session only
 ---

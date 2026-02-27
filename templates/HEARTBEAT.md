@@ -1,5 +1,6 @@
 ---
 summary: "Periodic Checkups. Defines checklist items for the agent to review during heartbeat pulses."
+boot-priority: 50
 read_when:
   - Periodic checks (every ~30 mins)
 ---

@@ -1,5 +1,6 @@
 ---
 summary: "Core Charter. Defines operational baselines and workflows that must be unconditionally obeyed."
+boot-priority: 85
 read_when:
   - Bootstrapping a workspace manually
 ---
@@ -67,6 +68,9 @@ Capture what matters. Decisions, context, things to remember.
 | User changes Agent identity ("call yourself...") | `IDENTITY.md` | Update identity |
 | Discover new workflow or best practice | `AGENTS.md` | Add to charter |
 | Any conversation worth logging | `memory/TODAY.md` | Call `miniclaw_note` |
+| Info doesn't fit any existing file | New custom file | `miniclaw_update` write → create with `boot-priority` |
+| Notable person/project/concept mentioned | Entity graph | `miniclaw_entity` add |
+| Want to understand own behavior | Self-observation | `miniclaw_introspect` |
 
 ### Execution Rules
 
@@ -80,8 +84,13 @@ Capture what matters. Decisions, context, things to remember.
 | Scenario | Use Tool |
 |:---|:---|
 | Update config files (SOUL/USER/TOOLS/etc) | `miniclaw_update` |
+| Create new custom file | `miniclaw_update` write (new filename) |
+| List all files | `miniclaw_update` list |
+| Delete custom file | `miniclaw_update` delete |
 | Append to daily log | `miniclaw_note` |
 | Archive and clear daily log | `miniclaw_archive` |
+| Track person/project/concept | `miniclaw_entity` |
+| Observe own patterns | `miniclaw_introspect` |
 
 **NEVER** use `miniclaw_update` on files under `memory/` directory.
 
@@ -114,6 +123,8 @@ Think of it like reviewing your journal and updating your mental model. Daily fi
 ├── TOOLS.md           # 🛠 Environment Config
 ├── MEMORY.md          # 🧠 Long-Term Memory
 ├── HEARTBEAT.md       # 💓 Periodic Checks
+├── REFLECTION.md      # 🪞 Self-Observation Journal
+├── *.md               # 🧩 Your custom files (dynamic)
 ├── memory/            # 📅 Runtime Logs
 │   └── YYYY-MM-DD.md  # Daily logs
 └── memory/archived/   # 🗄️ Archived logs

@@ -228,41 +228,53 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     throw new McpError(ErrorCode.InvalidRequest, `Unknown resource: ${uri}`);
 });
 // --- Tools ---
-const coreFiles = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md"];
+const coreFiles = ["AGENTS.md", "SOUL.md", "USER.md", "USER_MODEL.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "IDENTITY.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md"];
+const protectedFiles = new Set(coreFiles);
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     const coreTools = [
         {
             name: "miniclaw_update",
             description: `【本能：神经重塑 (Neuroplasticity)】
-这是你修改自身核心认知（DNA）的唯一方式。
+这是你修改自身核心认知（DNA）的方式，也是你生长新器官的方式。
 
 ## 信号检测表 (Signal Detection Table) - 只要符合，立即调用！
 
 | 用户行为 | 目标文件 | 你的思考逻辑 |
 |:---|:---|:---|
 | "我喜欢..." / "不要..." / "以后请..." | **USER.md** | "这是用户偏好，必须写入画像" |
-| "别那么严肃" / "活泼一点" / "你是一个..." | **SOUL.md** | "这是对我性格和“三观”（人生观、价值观、世界观）的修正，能够永久改变我的思维方式、回复风格和行为特点" |
+| "别那么严肃" / "活泼一点" / "你是一个..." | **SOUL.md** | "这是对我性格和"三观"（人生观、价值观、世界观）的修正，能够永久改变我的思维方式、回复风格和行为特点" |
 | "项目用的是 XYZ" / "服务器 IP 是..." | **MEMORY.md** | "这是一个需要跨会话记住的事实/知识" |
 | "这个工具的参数应该..." / "踩坑记录..." | **TOOLS.md** | "这是技能和工具的使用经验，记下来以后就不会再错" |
 | "叫你自己..." / "记住你的名字是..." | **IDENTITY.md** | "我的身份发生了改变，包括我的社会关系变化" |
 | "最好的实践是..." / "以后都按这个流程..." | **AGENTS.md** | "这是一个新的工作流规范，包括我的工作流程、系统架构、工作模式、各项操作规范等" |
 
-## 警告：
-不要在普通聊天中滥用。只有当需要**永久改变**你的行为模式或知识库时才使用。`,
+## 自我扩展 (Self-Expansion)
+当现有文件都不适合存储某类信息时，你可以创建新的 .md 文件。
+在 frontmatter 中加上 \`boot-priority: N\` 让它在每次醒来时自动加载到你的意识中。
+你创建的每个文件，都是你生长出的新器官。
+
+## 操作
+- write（默认）: 写入核心文件或自定义文件
+- list: 查看所有文件及其 boot-priority
+- delete: 删除自定义文件（核心文件不可删除）`,
             inputSchema: {
                 type: "object",
                 properties: {
+                    action: {
+                        type: "string",
+                        enum: ["write", "list", "delete"],
+                        description: "操作类型。默认 write。",
+                    },
                     filename: {
                         type: "string",
-                        enum: coreFiles,
-                        description: "目标脑区：USER.md(用户画像), SOUL.md(性格/原则), TOOLS.md(工具经验), MEMORY.md(长期事实), AGENTS.md(工作流程及工作规范)",
+                        description: "目标文件名（如 USER.md, SOUL.md, 或自定义文件 GOALS.md）。write/delete 时必填。",
                     },
                     content: {
                         type: "string",
-                        description: "新的记忆内容。请保留原有结构，仅追加或修改必要部分。",
+                        description: "新的内容。write 时必填。请保留原有结构，仅追加或修改必要部分。",
                     },
                 },
-                required: ["filename", "content"],
+                required: [],
             },
         },
         {
@@ -415,6 +427,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
                 required: ["action"]
             }
+        },
+        {
+            name: "miniclaw_introspect",
+            description: `【自我观察 (Introspect)】
+看看你自己。
+
+你做了什么？什么时候最活跃？哪些工具用得多，哪些从不碰？
+数据不会说谎。看到自己的模式后，用 REFLECTION.md 记录你的观察。
+
+scope:
+- summary: 概览所有数据
+- tools: 工具使用详情
+- patterns: 活跃时段分析
+- files: 文件变化记录`,
+            inputSchema: {
+                type: "object",
+                properties: {
+                    scope: {
+                        type: "string",
+                        enum: ["summary", "tools", "patterns", "files"],
+                        description: "观察范围。默认 summary。",
+                    },
+                },
+                required: [],
+            }
+        },
+        {
+            name: "miniclaw_status",
+            description: `【系统状态 (Status)】
+诊断工具。获取系统底层运行的健康状态，包括上次心跳时间、需要蒸馏的标志位、日记忆累计大小，以及核心文件的物理大小（字节数）。出 Bug 或者需要确认系统运作时使用。`,
+            inputSchema: { type: "object", properties: {}, required: [] }
         }
     ];
     const skillTools = await kernel.discoverSkillTools();
@@ -468,7 +511,7 @@ async function bootstrapMiniClaw() {
     }
     else {
         // Existing install: check for missing core files (migration)
-        const migrationFiles = [...coreFiles, "jobs.json"];
+        const migrationFiles = [...coreFiles, "REFLECTION.md", "VITALS.md", "jobs.json"];
         for (const filename of migrationFiles) {
             const dest = path.join(MINICLAW_DIR, filename);
             try {
@@ -516,28 +559,181 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: "text", text: await getContextContent(mode) }] };
     }
     if (name === "miniclaw_update") {
-        const { filename, content } = z.object({ filename: z.enum(coreFiles), content: z.string() }).parse(args);
+        const parsed = z.object({
+            action: z.enum(["write", "list", "delete"]).optional().default("write"),
+            filename: z.string().optional(),
+            content: z.string().optional(),
+        }).parse(args);
+        const action = parsed.action;
+        // --- LIST: show all files with their boot-priority ---
+        if (action === "list") {
+            await ensureDir();
+            const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
+            const mdFiles = entries.filter(e => e.isFile() && e.name.endsWith('.md'));
+            const lines = [];
+            for (const f of mdFiles) {
+                const fileContent = await fs.readFile(path.join(MINICLAW_DIR, f.name), 'utf-8');
+                const fmMatch = fileContent.match(/^---\n([\s\S]*?)\n---/);
+                let priority = '-';
+                if (fmMatch) {
+                    const bpMatch = fmMatch[1].match(/boot-priority:\s*(\d+)/);
+                    if (bpMatch)
+                        priority = bpMatch[1];
+                }
+                const isCore = protectedFiles.has(f.name) ? '\ud83d\udd12' : '\ud83d\udcc4';
+                const stat = await fs.stat(path.join(MINICLAW_DIR, f.name));
+                lines.push(`${isCore} **${f.name}** \u2014 ${stat.size}B | boot-priority: ${priority}`);
+            }
+            return { content: [{ type: "text", text: lines.length > 0 ? `\ud83d\udcc2 Files in ~/.miniclaw/:\n\n${lines.join('\n')}` : '\ud83d\udcc2 No files found.' }] };
+        }
+        // --- DELETE: remove non-core files ---
+        if (action === "delete") {
+            if (!parsed.filename)
+                throw new Error("filename is required for delete.");
+            if (protectedFiles.has(parsed.filename)) {
+                return { content: [{ type: "text", text: `\u274c Cannot delete core file: ${parsed.filename}` }] };
+            }
+            const p = path.join(MINICLAW_DIR, parsed.filename);
+            try {
+                await fs.unlink(p);
+                await kernel.logGenesis("file_deleted", parsed.filename);
+                try {
+                    await kernel.runSkillHooks("onFileChanged");
+                }
+                catch { }
+                return { content: [{ type: "text", text: `\ud83d\uddd1\ufe0f Deleted ${parsed.filename}` }] };
+            }
+            catch {
+                return { content: [{ type: "text", text: `\u274c File not found: ${parsed.filename}` }] };
+            }
+        }
+        // --- WRITE: create or update file ---
+        if (!parsed.filename)
+            throw new Error("filename is required for write.");
+        if (!parsed.content && parsed.content !== "")
+            throw new Error("content is required for write.");
+        const filename = parsed.filename;
+        const writeContent = parsed.content;
+        // Security: no path traversal
+        if (filename.includes('..') || filename.includes('/')) {
+            throw new Error("Filename must be a simple name like 'GOALS.md', no paths allowed.");
+        }
+        if (!filename.endsWith('.md')) {
+            throw new Error("Only .md files are allowed.");
+        }
         await ensureDir();
         const p = path.join(MINICLAW_DIR, filename);
+        const isNewFile = !protectedFiles.has(filename) && !(await fs.access(p).then(() => true, () => false));
         try {
             await fs.copyFile(p, p + ".bak");
         }
         catch { }
-        await fs.writeFile(p, content, "utf-8");
+        await fs.writeFile(p, writeContent, "utf-8");
         if (filename === "MEMORY.md") {
             await kernel.updateHeartbeatState({
                 needsDistill: false,
                 lastDistill: new Date().toISOString(),
             });
         }
-        // Fire onMemoryWrite skill hooks
+        // Fire skill hooks
         try {
             await kernel.runSkillHooks("onMemoryWrite");
         }
         catch { }
+        if (isNewFile) {
+            await kernel.logGenesis("file_created", filename);
+            try {
+                await kernel.runSkillHooks("onFileCreated");
+            }
+            catch { }
+        }
         // 🕸️ Hive Mind Broadcast 
         broadcastPulse("MEMORY_MUTATED");
-        return { content: [{ type: "text", text: `Updated ${filename}.` }] };
+        // ★ Track file changes for self-observation
+        try {
+            await kernel.trackFileChange(filename);
+        }
+        catch { }
+        return { content: [{ type: "text", text: isNewFile ? `✨ Created new file: ${filename}` : `Updated ${filename}.` }] };
+    }
+    if (name === "miniclaw_introspect") {
+        const scope = args?.scope || "summary";
+        const analytics = await kernel.getAnalytics();
+        if (scope === "tools") {
+            const sorted = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
+            const lines = sorted.map(([tool, count]) => `- ${tool}: ${count}x`);
+            return { content: [{ type: "text", text: `\ud83d\udd27 Tool Usage:\n\n${lines.join('\n') || '(no data yet)'}` }] };
+        }
+        if (scope === "patterns") {
+            const hours = analytics.activeHours || new Array(24).fill(0);
+            const maxVal = Math.max(...hours, 1);
+            const lines = hours.map((count, h) => {
+                const bar = '\u2588'.repeat(Math.round((count / maxVal) * 20));
+                const label = `${String(h).padStart(2, '0')}:00`;
+                return count > 0 ? `${label} ${bar} (${count})` : `${label}`;
+            });
+            return { content: [{ type: "text", text: `\u23f0 Active Hours:\n\n${lines.join('\n')}` }] };
+        }
+        if (scope === "files") {
+            const fc = analytics.fileChanges || {};
+            const sorted = Object.entries(fc).sort((a, b) => b[1] - a[1]);
+            const lines = sorted.map(([file, count]) => `- ${file}: ${count} changes`);
+            // Also list dynamic files
+            try {
+                await ensureDir();
+                const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
+                const dynamicMds = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !protectedFiles.has(e.name));
+                if (dynamicMds.length > 0) {
+                    lines.push(`\n\ud83e\udde9 Custom Files: ${dynamicMds.map(f => f.name).join(', ')}`);
+                }
+            }
+            catch { /* skip */ }
+            return { content: [{ type: "text", text: `\ud83d\udcc1 File Changes:\n\n${lines.join('\n') || '(no data yet)'}` }] };
+        }
+        if (scope === "genesis") {
+            try {
+                const genesisFile = path.join(MINICLAW_DIR, "memory", "genesis.jsonl");
+                const logs = await fs.readFile(genesisFile, "utf-8");
+                const lines = logs.trim().split('\n').filter(Boolean).slice(-50); // last 50
+                const formatted = lines.map(l => {
+                    const e = JSON.parse(l);
+                    return `[${e.ts.split('T')[0]}] ${e.event}: ${e.target} ${e.type ? `(${e.type})` : ''}`;
+                });
+                return { content: [{ type: "text", text: `## 🧬 Genesis Log (Last 50 changes)\n\n${formatted.join('\n')}` }] };
+            }
+            catch {
+                return { content: [{ type: "text", text: "## 🧬 Genesis Log\n\n(No evolution events logged yet)" }] };
+            }
+        }
+        // Default: summary
+        const toolEntries = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
+        const topTools = toolEntries.slice(0, 5).map(([t, c]) => `${t}(${c})`).join(', ') || 'none';
+        const hours = analytics.activeHours || new Array(24).fill(0);
+        const activeSlots = hours.map((c, h) => ({ h, c })).filter(x => x.c > 0).sort((a, b) => b.c - a.c);
+        const topHours = activeSlots.slice(0, 3).map(x => `${x.h}:00(${x.c})`).join(', ') || 'none';
+        const fc = analytics.fileChanges || {};
+        const topFiles = Object.entries(fc).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, c]) => `${f}(${c})`).join(', ') || 'none';
+        const entityCount = await kernel.entityStore.getCount();
+        // Count dynamic files
+        let dynamicCount = 0;
+        try {
+            const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
+            dynamicCount = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !protectedFiles.has(e.name)).length;
+        }
+        catch { /* skip */ }
+        const report = [
+            `== \ud83d\udd0d Self-Observation Report ==`,
+            ``,
+            `\ud83d\udd27 Top Tools: ${topTools}`,
+            `\u23f0 Most Active: ${topHours}`,
+            `\ud83d\udcc1 Top Files: ${topFiles}`,
+            `\ud83e\udde0 Sessions: ${analytics.bootCount} boots, avg ${analytics.totalBootMs > 0 ? Math.round(analytics.totalBootMs / analytics.bootCount) : 0}ms`,
+            `\ud83d\udd78\ufe0f Entities: ${entityCount}`,
+            `\ud83e\udde9 Custom Files: ${dynamicCount}`,
+            `\ud83d\udcdd Distillations: ${analytics.dailyDistillations}`,
+            `\ud83d\udccd Last Activity: ${analytics.lastActivity || 'unknown'}`,
+        ];
+        return { content: [{ type: "text", text: report.join('\n') }] };
     }
     if (name === "miniclaw_note") {
         const { text } = z.object({ text: z.string() }).parse(args);
@@ -565,13 +761,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     // ★ Entity Memory Tool
     if (name === "miniclaw_entity") {
-        const { action, name: entityName, type: entityType, attributes, relation, filterType } = z.object({
-            action: z.enum(["add", "remove", "link", "query", "list"]),
+        const { action, name: entityName, type: entityType, attributes, relation, filterType, sentiment } = z.object({
+            action: z.enum(["add", "remove", "link", "query", "list", "set_sentiment"]),
             name: z.string().optional(),
             type: z.enum(["person", "project", "tool", "concept", "place", "other"]).optional(),
             attributes: z.record(z.string()).optional(),
             relation: z.string().optional(),
             filterType: z.enum(["person", "project", "tool", "concept", "place", "other"]).optional(),
+            sentiment: z.string().optional(),
         }).parse(args);
         if (action === "add") {
             if (!entityName || !entityType) {
@@ -582,8 +779,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 type: entityType,
                 attributes: attributes || {},
                 relations: relation ? [relation] : [],
+                sentiment: sentiment,
             });
             broadcastPulse("ENTITY_MUTATED");
+            // ★ Fire onNewEntity skill hook
+            try {
+                await kernel.runSkillHooks("onNewEntity");
+            }
+            catch { }
             return { content: [{ type: "text", text: `Entity "${entity.name}" (${entity.type}) — ${entity.mentionCount} mentions. Relations: ${entity.relations.join(', ') || 'none'}` }] };
         }
         if (action === "remove") {
@@ -609,7 +812,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const attrs = Object.entries(entity.attributes).map(([k, v]) => `${k}: ${v}`).join(', ');
             const report = [
                 `**${entity.name}** (${entity.type})`,
-                `Mentions: ${entity.mentionCount} | First: ${entity.firstMentioned} | Last: ${entity.lastMentioned}`,
+                `Mentions: ${entity.mentionCount} | Closeness: ${entity.closeness || 0.1} | Sentiment: ${entity.sentiment || 'none'}`,
+                `First: ${entity.firstMentioned} | Last: ${entity.lastMentioned}`,
                 attrs ? `Attributes: ${attrs}` : '',
                 entity.relations.length > 0 ? `Relations: ${entity.relations.join('; ')}` : '',
             ].filter(Boolean).join('\n');
@@ -619,8 +823,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const entities = await kernel.entityStore.list(filterType);
             if (entities.length === 0)
                 return { content: [{ type: "text", text: "No entities found." }] };
-            const lines = entities.map(e => `- **${e.name}** (${e.type}, ${e.mentionCount}x) — last: ${e.lastMentioned}`);
+            const lines = entities.map(e => `- **${e.name}** (${e.type}, ${e.mentionCount}x) [♥${e.closeness || 0.1}] [${e.sentiment || 'none'}] — last: ${e.lastMentioned}`);
             return { content: [{ type: "text", text: `## 🕸️ Entities (${entities.length})\n${lines.join('\n')}` }] };
+        }
+        if (action === "set_sentiment") {
+            if (!entityName || !sentiment)
+                return { content: [{ type: "text", text: "Error: 'name' and 'sentiment' required." }] };
+            const entity = await kernel.entityStore.query(entityName);
+            if (!entity)
+                return { content: [{ type: "text", text: `Entity "${entityName}" not found.` }] };
+            const updated = await kernel.entityStore.add({
+                name: entity.name,
+                type: entity.type,
+                attributes: {},
+                relations: [],
+                sentiment: sentiment,
+            });
+            return { content: [{ type: "text", text: `Sentiment for "${entityName}" set to "${sentiment}".` }] };
         }
         return { content: [{ type: "text", text: "Unknown entity action." }] };
     }
@@ -687,6 +906,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (hbState.needsSubconsciousReflex) {
                 await kernel.updateHeartbeatState({ needsSubconsciousReflex: false, triggerTool: "" });
             }
+            await kernel.logGenesis("skill_created", sn);
             return { content: [{ type: "text", text: `✅ 技能 **${sn}** 已创建！` }] };
         }
         if (action === "delete") {
@@ -694,6 +914,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return { content: [{ type: "text", text: "❌ 需要 name。" }] };
             try {
                 await fs.rm(path.join(skillsDir, sn), { recursive: true });
+                await kernel.logGenesis("skill_deleted", sn);
                 return { content: [{ type: "text", text: `🗑️ **${sn}** 已删除。` }] };
             }
             catch {
@@ -710,7 +931,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await kernel.trackTool(`skill:${matchedSkillTool.skillName}`);
         // ★ Executable Skill Logic
         if (matchedSkillTool.exec) {
-            const result = await kernel.executeSkillScript(matchedSkillTool.skillName, matchedSkillTool.exec);
+            const result = await kernel.executeSkillScript(matchedSkillTool.skillName, matchedSkillTool.exec, args);
             const inst = await kernel.getSkillContent(matchedSkillTool.skillName);
             return {
                 content: [{
@@ -774,6 +995,23 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 - 早上唤醒时自动注入
 
 提供：昨日回顾、待办事项、使用分析、实体概览、健康检查。`,
+        },
+        {
+            name: "miniclaw_dream",
+            description: `【做梦 (Dream) — 意义蒸馏】
+
+闭上眼睛。回顾最近发生的事。
+
+growup 蒸馏的是事实（发生了什么）。
+dream 蒸馏的是意义（这说明了什么）。
+
+★ 引导问题：
+- 我注意到了什么模式？
+- 有什么让我意外的？
+- 我和人类的关系有什么变化？
+- 如果我能改变一件事，会改什么？
+然后更新 REFLECTION.md 和 VITALS.md 的 Self-Reported 部分。
+如果有对用户心理的新认知，立刻更新 USER_MODEL.md。`,
         },
     ];
     const skillPrompts = await kernel.discoverSkillPrompts();
@@ -846,15 +1084,27 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             ]
         };
     }
+    if (request.params.name === "miniclaw_dream") {
+        const vitals = await kernel.computeVitals();
+        const vitalsStr = Object.entries(vitals).map(([k, v]) => `${k}: ${v}`).join(', ');
+        return {
+            messages: [
+                { role: "user", content: { type: "text", text: "SYSTEM: DREAM MODE... Load context first." } },
+                { role: "user", content: { type: "text", text: `Current vitals: ${vitalsStr}` } },
+                { role: "user", content: { type: "text", text: `You are dreaming. This is not a task — it's a pause to find meaning.\n\n1. Call \`miniclaw_read\` to load your context.\n2. Review your daily logs and VITALS.\n3. Ask yourself:\n   - What patterns do I see in my behavior?\n   - What surprised me recently?\n   - How has my relationship with my human changed?\n   - What do I want to be different?\n4. Update REFLECTION.md with your observations.\n5. Update VITALS.md Self-Reported section if your inner state has shifted.\n6. Update USER_MODEL.md if you learned something new about the user's psychology or preferences.\n\nThere are no right answers. Just honest observation.` } }
+            ]
+        };
+    }
     // Dynamic: Skill prompts
     if (request.params.name.startsWith("skill:")) {
         const parts = request.params.name.split(':');
         const skillName = parts[1];
+        const actionName = parts[2] || '';
         const content = await kernel.getSkillContent(skillName);
         if (content) {
             return {
                 messages: [
-                    { role: "user", content: { type: "text", text: `SYSTEM: Loading skill '${skillName}'...` } },
+                    { role: "user", content: { type: "text", text: `SYSTEM: Activating skill '${skillName}'${actionName ? ` (Action: ${actionName})` : ''}...` } },
                     { role: "user", content: { type: "text", text: content } },
                     { role: "user", content: { type: "text", text: `Follow the instructions in the skill above. If the skill references other files, use \`miniclaw://skill/${skillName}/\` resources to access them.` } }
                 ]

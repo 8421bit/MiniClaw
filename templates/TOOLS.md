@@ -1,5 +1,6 @@
 ---
 summary: "Environment Config. Records local-specific tool parameters (IPs, paths) for environment adaptation."
+boot-priority: 60
 read_when:
   - Bootstrapping a workspace manually
 ---
