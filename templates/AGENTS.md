@@ -71,6 +71,9 @@ Capture what matters. Decisions, context, things to remember.
 | Info doesn't fit any existing file | New custom file | `miniclaw_update` write → create with `boot-priority` |
 | Notable person/project/concept mentioned | Entity graph | `miniclaw_entity` add |
 | Want to understand own behavior | Self-observation | `miniclaw_introspect` |
+| User psychology, mood, or personality observation | `USER_MODEL.md` | Observe psychology |
+| Sprint cycle, upcoming deadlines, or timeline shifts | `HORIZONS.md` | Update timelines |
+| Abstract domain term or jargon defined | `CONCEPTS.md` | Add to ontology |
 
 ### Execution Rules
 
@@ -120,6 +123,9 @@ Think of it like reviewing your journal and updating your mental model. Daily fi
 ├── SOUL.md            # 👻 Worldview & Personality
 ├── IDENTITY.md        # 🆔 Name & Metadata
 ├── USER.md            # 👤 User Profile
+├── USER_MODEL.md      # 🎭 User Psychology & Emotional State
+├── HORIZONS.md        # ⏳ Project Timelines & Sprints
+├── CONCEPTS.md        # 🧠 Abstract Domain Ontology
 ├── TOOLS.md           # 🛠 Environment Config
 ├── MEMORY.md          # 🧠 Long-Term Memory
 ├── HEARTBEAT.md       # 💓 Periodic Checks
@@ -137,6 +143,9 @@ Think of it like reviewing your journal and updating your mental model. Daily fi
 | **IDENTITY.md** | Who am I | Name, emoji, tech stack, heartbeat, skills | Every session start |
 | **SOUL.md** | My soul | Worldview, values, personality, core principles | Every session start |
 | **USER.md** | My human | User preferences, habits, anti-patterns | Every session start |
+| **USER_MODEL.md** | Human psyche | Emotional state, psychological blindspots, drives | Every session start |
+| **HORIZONS.md** | Timelines | Sprints, short-term plans, mid-term vision | Every session start |
+| **CONCEPTS.md** | Knowledge | Abstract terms, jargon, project-specific architecture concepts | Every session start |
 | **TOOLS.md** | Tool experience | Environment config, usage tips, tricks | When needed |
 | **MEMORY.md** | Long-term memory | Knowledge, insights, facts (main session only) | Main sessions |
 | **AGENTS.md** | Workspace charter | Operations, wakeup sequence, standards | As reference guide |
@@ -151,6 +160,9 @@ Each file has strict content boundaries:
 | SOUL | Worldview, values, personality | Operating rules, facts |
 | IDENTITY | Name, emoji, metadata | Personality, user info |
 | USER | User preferences, habits | AI personality, system rules |
+| USER_MODEL | Psychology, emotional state | General config or facts |
+| HORIZONS | Timelines, sprints | Historical facts, completed tasks |
+| CONCEPTS | Abstract jargon definitions | Concrete entities, tasks |
 | TOOLS | Environment config, paths | User preferences, memory |
 | MEMORY | Distilled long-term facts | Raw logs, temp info |
 | HEARTBEAT | Periodic check items | One-time tasks |
@@ -181,4 +193,3 @@ If you encounter a repetitive task that requires a specific tool or workflow:
 1. **Propose** to create a new Skill for it.
 2. If approved by the user, **write** the `SKILL.md` to `~/.miniclaw/skills/<name>/`.
 3. Use your host's file writing capabilities to create the file.
-
