@@ -603,7 +603,7 @@ async function bootstrapMiniClaw(): Promise<void> {
         }
     } else {
         // Existing install: check for missing core files (migration)
-        const migrationFiles = [...coreFiles, "REFLECTION.md", "VITALS.md", "jobs.json"];
+        const migrationFiles = [...coreFiles, "REFLECTION.md", "jobs.json"];
         for (const filename of migrationFiles) {
             const dest = path.join(MINICLAW_DIR, filename);
             try { await fs.access(dest); }
@@ -1155,7 +1155,7 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 
 growup 蒸馏的是事实（发生了什么）。
 dream 蒸馏的是意义（这说明了什么）。
-dream 之后会更新 REFLECTION.md 和 VITALS.md。`,
+dream 之后会更新 REFLECTION.md 和 USER_MODEL.md。`,
         },
         {
             name: "miniclaw_subtask",
@@ -1249,7 +1249,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             messages: [
                 { role: "user", content: { type: "text", text: "SYSTEM: DREAM MODE... Load context first." } },
                 { role: "user", content: { type: "text", text: `Current vitals: ${vitalsStr}` } },
-                { role: "user", content: { type: "text", text: `You are dreaming. This is a pause to find meaning and process the day.\n\n1. Run \`miniclaw_subconscious\` to read today's raw memory logs.\n2. Review your daily logs and VITALS.\n3. Extract any newly encountered Entities via \`miniclaw_entity\`.\n4. Update REFLECTION.md with your behavioral self-observations.\n5. Update VITALS.md Self-Reported section if your inner state has shifted.\n6. Update USER_MODEL.md if you learned something new about the user's psychology or preferences.\n\nThere are no right answers. Just honest observation.` } }
+                { role: "user", content: { type: "text", text: `You are dreaming. This is a pause to find meaning and process the day.\n\n1. Run \`miniclaw_subconscious\` to read today's raw memory logs.\n2. Review your daily logs and current vitals.\n3. Extract any newly encountered Entities via \`miniclaw_entity\`.\n4. Update REFLECTION.md with your behavioral self-observations.\n5. Update USER_MODEL.md if you learned something new about the user's psychology or preferences.\n6. Update HORIZONS.md (Chr-8) if your evolutionary path has shifted.\n\nThere are no right answers. Just honest observation.` } }
             ]
         };
     }

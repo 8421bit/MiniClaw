@@ -18,11 +18,12 @@ read_when:
 | Chr-5 | MEMORY.md | memory | Long-term curated memories | 5 (main only) |
 | Chr-6 | CONCEPTS.md | knowledge | Knowledge graph and concepts | 6 |
 | Chr-7 | REFLECTION.md | reflection | Self-observation and lessons learned | 7 (dream) |
+| Chr-8 | HORIZONS.md | instinct | Ultimate Objective and evolutionary drive | 8 |
 
 ## Boot Sequence
 
 ```
-AGENTS.md (Genome Control) → Chr-1 → Chr-2 → Chr-3 → Chr-4 → [Chr-5 if main session]
+AGENTS.md (Genome Control) → Chr-1 → Chr-2 → Chr-3 → Chr-4 → Chr-8 → [Chr-5 if main session]
 ```
 
 ## Evolution Tracking

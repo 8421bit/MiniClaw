@@ -955,10 +955,7 @@ export class ContextKernel {
             }
         }
 
-        // ★ Vitals: combined static template + dynamic sensing
-        if (templates.vitals) {
-            sections.push({ name: "VITALS.md", content: this.formatFile("VITALS.md", templates.vitals), priority: 6 });
-        }
+        // ★ Live Vitals: dynamic sensing only (template removed)
         try {
             const vitals = await this.computeVitals(memoryStatus.todayContent);
             const vitalsLines = Object.entries(vitals).map(([k, v]) => `- ${k}: ${v}`).join('\n');
@@ -1685,10 +1682,10 @@ export class ContextKernel {
     }
 
     private async loadTemplates() {
-        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "USER_MODEL.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md", "REFLECTION.md", "VITALS.md"];
+        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "USER_MODEL.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md", "REFLECTION.md"];
         const coreSet = new Set(names);
         // Core files that should never be empty — auto-recover from templates if corrupted
-        const CORE_RECOVER = new Set(["AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md", "REFLECTION.md", "VITALS.md"]);
+        const CORE_RECOVER = new Set(["AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md", "REFLECTION.md"]);
         const results = await Promise.all(names.map(async (name) => {
             try {
                 const filePath = path.join(MINICLAW_DIR, name);
