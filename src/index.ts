@@ -24,6 +24,9 @@ import { fuzzyScore } from "./utils.js";
 // Configuration
 const kernel = new ContextKernel();
 
+// Start autonomic nervous system (pulse + dream)
+kernel.startAutonomic();
+
 // --- Hive-Mind IPC ---
 const SocketsDir = path.join(MINICLAW_DIR, "sockets");
 const MySocketPath = path.join(SocketsDir, `mcp-${process.pid}.sock`);
@@ -139,8 +142,8 @@ async function executeHeartbeat(): Promise<void> {
             console.error(`[MiniClaw] Auto-archive: daily log exceeds 50KB (${updatedHb.dailyLogBytes}B), flagging needsDistill.`);
         }
 
-        // 💤 Subconscious REM Sleep (Auto-triggered when idle >4h)
-        // TODO: Migrate sys_dream functionality to kernel autonomic system
+        // 💤 Subconscious REM Sleep (Auto-triggered by AutonomicSystem when idle >4h)
+        // Note: sys_dream functionality now runs automatically in kernel.startAutonomic()
 
     } catch (err) {
         console.error(`[MiniClaw] Heartbeat error: ${err}`);

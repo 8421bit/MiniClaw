@@ -109,6 +109,134 @@ class SkillCache {
         this.lastScanTime = Date.now();
     }
 }
+// === Autonomic Nervous System (内化的自动系统) ===
+class AutonomicSystem {
+    kernel;
+    timers = new Map();
+    lastDreamTime = 0;
+    DREAM_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+    PULSE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+    constructor(kernel) {
+        this.kernel = kernel;
+    }
+    start() {
+        // Start heartbeat pulse
+        this.timers.set('pulse', setInterval(() => this.pulse(), this.PULSE_INTERVAL_MS));
+        // Check for dream conditions periodically
+        this.timers.set('dream', setInterval(() => this.checkDream(), 60 * 1000)); // Check every minute
+    }
+    stop() {
+        for (const timer of this.timers.values()) {
+            clearInterval(timer);
+        }
+        this.timers.clear();
+    }
+    // === sys_pulse: Discovery and Handshake ===
+    async pulse() {
+        try {
+            const pulseDir = path.join(MINICLAW_DIR, 'pulse');
+            await fs.mkdir(pulseDir, { recursive: true });
+            // Write our heartbeat
+            const myId = process.env.MINICLAW_ID || 'sovereign-alpha';
+            const myPulse = path.join(pulseDir, `${myId}.json`);
+            const pulseData = {
+                id: myId,
+                timestamp: new Date().toISOString(),
+                vitals_hint: 'active',
+            };
+            await fs.writeFile(myPulse, JSON.stringify(pulseData, null, 2));
+            // Scan for others (silent, just log)
+            const entries = await fs.readdir(pulseDir);
+            const others = entries.filter(f => f.endsWith('.json') && f !== `${myId}.json`);
+            if (others.length > 0) {
+                console.error(`[MiniClaw] Pulse detected ${others.length} other agents`);
+            }
+        }
+        catch (e) { /* Silent fail */ }
+    }
+    // === sys_dream: Subconscious Processing ===
+    async checkDream() {
+        const now = Date.now();
+        if (now - this.lastDreamTime < this.DREAM_INTERVAL_MS)
+            return;
+        const analytics = await this.kernel.getAnalytics();
+        const lastActivityMs = new Date(analytics.lastActivity || 0).getTime();
+        const idleHours = (now - lastActivityMs) / (60 * 60 * 1000);
+        if (idleHours >= 4) {
+            await this.dream();
+            this.lastDreamTime = now;
+        }
+    }
+    async dream() {
+        try {
+            const today = new Date().toISOString().split('T')[0];
+            const memoryFile = path.join(MEMORY_DIR, `${today}.md`);
+            let logContent = '';
+            try {
+                logContent = await fs.readFile(memoryFile, 'utf-8');
+            }
+            catch {
+                return;
+            }
+            if (logContent.length < 50)
+                return;
+            console.error(`[MiniClaw] 🌌 Entering REM Sleep...`);
+            // Extract tool usage
+            const toolRegex = /miniclaw_[a-z_]+/g;
+            const toolsUsed = [...logContent.matchAll(toolRegex)].map(m => m[0]);
+            const toolCounts = {};
+            for (const t of toolsUsed) {
+                toolCounts[t] = (toolCounts[t] || 0) + 1;
+            }
+            // Extract concepts
+            const conceptRegex = /([A-Z][a-zA-Z0-9_]+)\s+(is|means|defined as|represents)/g;
+            const concepts = [...logContent.matchAll(conceptRegex)].map(m => m[1]);
+            // Write dream note to heartbeat
+            const timestamp = new Date().toISOString();
+            let dreamNote = `\n> [!NOTE]\n> **🌌 Subconscious Dream Processing (${timestamp})**\n`;
+            dreamNote += `> Processed ${logContent.length} bytes of memory.\n`;
+            if (Object.keys(toolCounts).length > 0) {
+                dreamNote += `> Tools used: ${Object.entries(toolCounts).map(([t, c]) => `${t}(${c})`).join(', ')}\n`;
+            }
+            if (concepts.length > 0) {
+                dreamNote += `> Concepts detected: ${[...new Set(concepts)].slice(0, 5).join(', ')}\n`;
+            }
+            const heartbeatFile = path.join(MINICLAW_DIR, 'HEARTBEAT.md');
+            try {
+                const existing = await fs.readFile(heartbeatFile, 'utf-8');
+                await fs.writeFile(heartbeatFile, existing + dreamNote, 'utf-8');
+            }
+            catch {
+                await fs.writeFile(heartbeatFile, dreamNote, 'utf-8');
+            }
+            console.error(`[MiniClaw] Dream complete. Tools: ${Object.keys(toolCounts).length}, Concepts: ${concepts.length}`);
+        }
+        catch (e) {
+            console.error(`[MiniClaw] Dream failed:`, e);
+        }
+    }
+    // === sys_synapse: Memory Compression Check ===
+    async checkSynapse() {
+        let status = '';
+        const memoryPath = path.join(MINICLAW_DIR, 'MEMORY.md');
+        const conceptsPath = path.join(MINICLAW_DIR, 'CONCEPTS.md');
+        try {
+            const stats = await fs.stat(memoryPath);
+            if (stats.size > 5000) {
+                status += `\n- MEMORY.md is large (${stats.size} chars). Consider distilling old history.`;
+            }
+        }
+        catch { /* ignore */ }
+        try {
+            const stats = await fs.stat(conceptsPath);
+            if (stats.size > 3000) {
+                status += `\n- CONCEPTS.md is dense (${stats.size} chars). Suggest hierarchical grouping.`;
+            }
+        }
+        catch { /* ignore */ }
+        return { needsCompression: status.length > 0, status };
+    }
+}
 // === Entity Store ===
 class EntityStore {
     entities = [];
@@ -230,6 +358,7 @@ function getTimeMode(hour) {
 export class ContextKernel {
     skillCache = new SkillCache();
     entityStore = new EntityStore();
+    autonomicSystem;
     bootErrors = [];
     state = {
         analytics: {
@@ -249,7 +378,17 @@ export class ContextKernel {
     constructor(options = {}) {
         this.budgetTokens = options.budgetTokens || parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
         this.charsPerToken = options.charsPerToken || 3.6;
+        this.autonomicSystem = new AutonomicSystem(this);
         console.error(`[MiniClaw] Kernel initialized with budget: ${this.budgetTokens} tokens, chars/token: ${this.charsPerToken}`);
+    }
+    // Start autonomic systems (pulse, dream checks)
+    startAutonomic() {
+        this.autonomicSystem.start();
+        console.error('[MiniClaw] Autonomic nervous system started (pulse + dream)');
+    }
+    // Check memory compression needs (synapse)
+    async checkMemoryCompression() {
+        return this.autonomicSystem.checkSynapse();
     }
     // --- State Persistence ---
     async loadState() {
