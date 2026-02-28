@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
 const execAsync = promisify(exec);
-// --- Configuration & Constants ---
+// === Configuration & Constants ===
 const HOME_DIR = process.env.HOME || process.cwd();
 export const MINICLAW_DIR = path.join(HOME_DIR, ".miniclaw");
 const SKILLS_DIR = path.join(MINICLAW_DIR, "skills");

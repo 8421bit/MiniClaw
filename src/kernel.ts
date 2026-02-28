@@ -9,7 +9,7 @@ import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
 
 const execAsync = promisify(exec);
 
-// --- Configuration & Constants ---
+// === Configuration & Constants ===
 const HOME_DIR = process.env.HOME || process.cwd();
 export const MINICLAW_DIR = path.join(HOME_DIR, ".miniclaw");
 const SKILLS_DIR = path.join(MINICLAW_DIR, "skills");
@@ -29,12 +29,12 @@ const INTERNAL_SKILLS_DIR = path.join(INTERNAL_TEMPLATES_DIR, "skills");
 // Context budget (configurable via env)
 const SKELETON_THRESHOLD = 300; // Lower threshold to trigger skeletonization even in small remaining slices
 
-// --- Interfaces ---
+// === Interfaces ===
 export interface MiniClawConfig {
-    remUrl?: string; // Example: "http://localhost:11434/api/generate"
-    remModel?: string; // Example: "llama3.2"
-    localLlmEndpoint?: string; // e.g., "http://localhost:11434/api/generate"
-    localModelName?: string;   // e.g., "llama3.2"
+    remUrl?: string;
+    remModel?: string;
+    localLlmEndpoint?: string;
+    localModelName?: string;
 }
 
 export interface RuntimeInfo {
@@ -48,11 +48,11 @@ export interface RuntimeInfo {
 
 export interface ContextMode {
     type: "full" | "minimal";
-    task?: string; // Specific task for sub-agents
-    suppressedGenes?: string[]; // Files to exclude during mitosis
+    task?: string;
+    suppressedGenes?: string[];
 }
 
-// --- Skill Types ---
+// === Skill Types ===
 export interface SkillPromptDeclaration {
     skillName: string;
     promptName: string;
@@ -70,18 +70,16 @@ export interface SkillToolDeclaration {
     toolName: string;
     description: string;
     schema?: Record<string, unknown>;
-    exec?: string; // SCRIPT TO EXECUTE (relative to skill dir)
+    exec?: string;
 }
 
-// --- Context Section (for budget management) ---
 interface ContextSection {
     name: string;
     content: string;
-    priority: number; // Base 1-10
-    weight?: number; // Dynamic attention weight
+    priority: number;
+    weight?: number;
 }
 
-// --- Skill Cache Entry ---
 interface SkillCacheEntry {
     name: string;
     content: string;
@@ -97,7 +95,7 @@ function getSkillMeta(fm: Record<string, unknown>, key: string): unknown {
     return meta?.[key] ?? fm[key];
 }
 
-// --- Content Hash State ---
+// === Content Hash State ===
 export interface ContentHashes {
     [sectionName: string]: string;
 }
@@ -108,7 +106,7 @@ export interface BootDelta {
     newSections: string[];
 }
 
-// --- ACE: Time Modes ---
+// === ACE: Time Modes ===
 type TimeMode = "morning" | "work" | "break" | "evening" | "night";
 
 interface TimeModeConfig {
@@ -127,7 +125,7 @@ const TIME_MODES: Record<TimeMode, TimeModeConfig> = {
     night: { emoji: "😴", label: "Night", briefing: false, reflective: false, minimal: true },
 };
 
-// --- Entity Types ---
+// === Entity Types ===
 export interface Entity {
     name: string;
     type: "person" | "project" | "tool" | "concept" | "place" | "other";
@@ -166,7 +164,7 @@ export interface Analytics {
     metabolicDebt: Record<string, number>; // Total token cost per skill/tool
 }
 
-// --- Persistent State ---
+// === Persistent State ===
 interface HeartbeatState {
     lastHeartbeat: string | null;
     lastDistill: string | null;
