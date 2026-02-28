@@ -2,7 +2,7 @@
 name: sys_stash
 description: "【跨会话状态快照 (Session Stash)】用于在不同会话之间暂存和恢复关键上下文状态。"
 metadata:
-  exec: "node ./run.js"
+  exec: "node ~/.miniclaw/skills/sys_stash/run.js"
   tools:
     - "run: 暂存管理 (action: save|load|list|clear, key, value)"
 ---

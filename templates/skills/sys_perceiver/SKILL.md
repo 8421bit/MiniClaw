@@ -2,7 +2,7 @@
 name: sys_perceiver
 description: "Visual analysis and UI shift detection. Analyzes screenshots to detect regressions or build failures."
 metadata:
-  exec: "node ./run.js"
+  exec: "node ~/.miniclaw/skills/sys_perceiver/run.js"
   hooks:
     - name: onVision
     - name: onFileChanged

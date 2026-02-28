@@ -2,7 +2,7 @@
 name: sys_pulse
 description: "Discover and handshake with other MiniClaw instances. Facilitates collective intelligence."
 metadata:
-  exec: "node ./run.js"
+  exec: "node ~/.miniclaw/skills/sys_pulse/run.js"
   trigger: 
     - Periodic heartbeat
     - Manual sync request

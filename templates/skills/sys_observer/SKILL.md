@@ -2,7 +2,7 @@
 name: sys_observer
 description: "Observe user interactions, detect patterns, and trigger DNA evolution for implicit learning."
 metadata:
-  exec: "node ./run.js"
+  exec: "node ~/.miniclaw/skills/sys_observer/run.js"
   tools:
     - name: analyze
       description: "Analyze recent interactions and detect patterns (repetition, temporal, preference, etc.)"

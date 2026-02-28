@@ -2,7 +2,7 @@
 name: sys_synapse
 description: "Hierarchical knowledge folding. Reorganizes flat memories into dense, semantic structures."
 metadata:
-  exec: "node ./run.js"
+  exec: "node ~/.miniclaw/skills/sys_synapse/run.js"
   trigger: 
     - Subconscious Dreaming (when memory pressure is high)
     - Manual invocation

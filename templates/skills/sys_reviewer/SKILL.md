@@ -2,7 +2,7 @@
 name: sys_reviewer
 description: "Automatically reviews newly created files to provide immediate feedback or categorization."
 metadata:
-  exec: "node ./run.js"
+  exec: "node ~/.miniclaw/skills/sys_reviewer/run.js"
   hooks:
     - name: onFileCreated
 ---

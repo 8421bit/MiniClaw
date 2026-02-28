@@ -2,7 +2,7 @@
 name: sys_dream
 description: "Trigger the subconscious dream state to process today's memory and unearth entities."
 metadata:
-  exec: "node ./run.js"
+  exec: "node ~/.miniclaw/skills/sys_dream/run.js"
   tools:
     - name: run
       description: "Trigger the subconscious dream state to process today's memory and unearth entities. Used internally by the heartbeat crawler."
