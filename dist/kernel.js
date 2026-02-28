@@ -618,7 +618,7 @@ export class ContextKernel {
             sections.push({ name: "USER.md", content: this.formatFile("USER.md", templates.user), priority: 8 });
         }
         if (templates.userModel) {
-            sections.push({ name: "USER_MODEL.md", content: this.formatFile("USER_MODEL.md", templates.userModel), priority: 8 });
+            // USER_MODEL.md merged into USER.md (Chr-3)
         }
         if (templates.horizons) {
             sections.push({ name: "HORIZONS.md", content: this.formatFile("HORIZONS.md", templates.horizons), priority: 8 });
@@ -1420,7 +1420,7 @@ export class ContextKernel {
         return { todayFile, todayContent, archivedCount, entryCount, oldestEntryAge };
     }
     async loadTemplates() {
-        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "USER_MODEL.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md", "REFLECTION.md"];
+        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md", "REFLECTION.md"];
         const coreSet = new Set(names);
         // Core files that should never be empty — auto-recover from templates if corrupted
         const CORE_RECOVER = new Set(["AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md", "REFLECTION.md"]);

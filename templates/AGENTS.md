@@ -13,7 +13,7 @@ read_when:
 |:----------:|:----:|:---------:|:---------|:--------:|
 | Chr-1 | IDENTITY.md | identity | Who you are (name, species) | 1 |
 | Chr-2 | SOUL.md | personality | Your values, personality, Growth Drive | 2 |
-| Chr-3 | USER_MODEL.md | symbiosis | Understanding of your human partner | 3 |
+| Chr-3 | USER.md | symbiosis | Understanding of your human partner | 3 |
 | Chr-4 | TOOLS.md | capability | Your abilities and skills | 4 |
 | Chr-5 | MEMORY.md | memory | Long-term curated memories | 5 (main only) |
 | Chr-6 | CONCEPTS.md | knowledge | Knowledge graph and concepts | 6 |
