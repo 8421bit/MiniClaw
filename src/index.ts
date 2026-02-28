@@ -139,19 +139,8 @@ async function executeHeartbeat(): Promise<void> {
             console.error(`[MiniClaw] Auto-archive: daily log exceeds 50KB (${updatedHb.dailyLogBytes}B), flagging needsDistill.`);
         }
 
-        // 💤 Subconscious REM Sleep (Local LLM Hook + sys_dream)
-        const analytics = await kernel.getAnalytics();
-        const lastActivityMs = new Date(analytics.lastActivity || 0).getTime();
-        const idleHours = (Date.now() - lastActivityMs) / (60 * 60 * 1000);
-
-        if (idleHours > 4) {
-            console.error(`[MiniClaw] 🌌 System idle for ${idleHours.toFixed(1)}h. Triggering subconscious dream state...`);
-            try {
-                await kernel.executeSkillScript("sys_dream", "run.js", {});
-            } catch (err) {
-                console.error(`[MiniClaw] Subconscious dream failed:`, err);
-            }
-        }
+        // 💤 Subconscious REM Sleep (Auto-triggered when idle >4h)
+        // TODO: Migrate sys_dream functionality to kernel autonomic system
 
     } catch (err) {
         console.error(`[MiniClaw] Heartbeat error: ${err}`);
@@ -614,14 +603,11 @@ async function bootstrapMiniClaw(): Promise<void> {
             }
         }
 
-        // Migration: Install system skills for existing 0.6.x users
+        // Migration: Install/update built-in system skills
         try {
-            const sysSearchPath = path.join(MINICLAW_DIR, "skills", "sys_search");
-            try { await fs.access(sysSearchPath); }
-            catch {
-                console.error(`[MiniClaw] Migration: Installing new built-in system skills...`);
-                await fs.cp(path.join(templatesDir, "skills"), path.join(MINICLAW_DIR, "skills"), { recursive: true, force: false });
-            }
+            const skillsDest = path.join(MINICLAW_DIR, "skills");
+            const skillsSrc = path.join(templatesDir, "skills");
+            await fs.cp(skillsSrc, skillsDest, { recursive: true, force: false });
         } catch (e) { console.error(`[MiniClaw] Migration error: ${e}`); }
     }
 }

@@ -817,11 +817,11 @@ export class ContextKernel {
         const bootMs = Date.now() - bootStart;
         this.state.analytics.totalBootMs += bootMs;
         this.state.analytics.lastActivity = new Date().toISOString();
-        // ★ Context Pressure Detection: trigger synapse reflex if pressure is high
+        // ★ Context Pressure Detection: mark for memory compression if pressure is high
         if (compiled.utilizationPct > 90) {
             const hbState = await this.getHeartbeatState();
             if (!hbState.needsSubconsciousReflex) {
-                await this.updateHeartbeatState({ needsSubconsciousReflex: true, triggerTool: "skill_sys_synapse_run" });
+                await this.updateHeartbeatState({ needsSubconsciousReflex: true, triggerTool: "memory_compression" });
             }
         }
         await this.saveState();
