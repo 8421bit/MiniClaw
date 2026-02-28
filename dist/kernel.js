@@ -613,12 +613,9 @@ export class ContextKernel {
         if (templates.agents) {
             sections.push({ name: "AGENTS.md", content: this.formatFile("AGENTS.md", templates.agents), priority: 9 });
         }
-        // Priority 8: User profile & User model & Horizons
+        // Priority 8: User profile (Chr-3) & Horizons (Chr-8)
         if (templates.user) {
             sections.push({ name: "USER.md", content: this.formatFile("USER.md", templates.user), priority: 8 });
-        }
-        if (templates.userModel) {
-            // USER_MODEL.md merged into USER.md (Chr-3)
         }
         if (templates.horizons) {
             sections.push({ name: "HORIZONS.md", content: this.formatFile("HORIZONS.md", templates.horizons), priority: 8 });
@@ -1480,9 +1477,9 @@ export class ContextKernel {
         catch { /* directory scan failed, not critical */ }
         return {
             agents: results[0], soul: results[1], identity: results[2],
-            user: results[3], userModel: results[4], horizons: results[5], concepts: results[6], tools: results[7], memory: results[8],
-            heartbeat: results[9], bootstrap: results[10], subagent: results[11],
-            reflection: results[12], vitals: results[13],
+            user: results[3], horizons: results[4], concepts: results[5], tools: results[6], memory: results[7],
+            heartbeat: results[8], bootstrap: results[9], subagent: results[10],
+            reflection: results[11],
             dynamicFiles,
         };
     }
