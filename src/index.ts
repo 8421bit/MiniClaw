@@ -478,6 +478,37 @@ scope:
             }
         },
         {
+            name: "miniclaw_evolve",
+            description: `【DNA 进化 (Evolve)】🧬 基于观察到的模式自动进化自身 DNA
+
+这是 Observer Protocol 的核心——将交互模式转化为自我成长。
+
+## 工作原理
+1. 分析最近 7 天的交互全息记录
+2. 检测重复模式、时间规律、用户偏好
+3. 生成 DNA 进化提案（更新 SOUL.md, USER_MODEL.md 等）
+4. 应用进化，让 MiniClaw 更懂你
+
+## 使用场景
+- 使用一段时间后，运行 evolve 让 MiniClaw 适应你的习惯
+- 发现 MiniClaw 越来越懂你了，就是 evolve 在起作用
+- 定期运行（如每周一次）持续优化
+
+## dryRun 模式
+先使用 dryRun: true 预览将要发生的改变，确认后再正式应用。`,
+            inputSchema: {
+                type: "object",
+                properties: {
+                    dryRun: {
+                        type: "boolean",
+                        description: "预览模式：只显示将要发生的改变，不实际应用",
+                        default: false,
+                    },
+                },
+                required: [],
+            }
+        },
+        {
             name: "miniclaw_status",
             description: `【系统状态 (Status)】获取 MiniClaw 底层状态分析。
 ## 适用场景:
@@ -643,11 +674,20 @@ async function getContextContent(mode: "full" | "minimal" = "full") {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    const toolStartTime = Date.now();
 
     // ★ Analytics: track every tool call with energy estimation (Metabolism)
     const inputSize = JSON.stringify(args || {}).length;
     const energyEstimate = Math.ceil(inputSize / 4) + 100; // Base cost 100 + input context
     await kernel.trackTool(name, energyEstimate);
+    
+    // ★ Observer: Record tool execution start
+    kernel.observerRecordCognition(
+        `Tool call: ${name}`,
+        0.8,
+        [name],
+        name
+    );
 
     if (name === "miniclaw_read") {
         return { content: [{ type: "text", text: await getContextContent("full") }] };
@@ -825,6 +865,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         ];
 
         return { content: [{ type: "text", text: report.join('\n') }] };
+    }
+
+    // ★ Observer: DNA Evolution Tool
+    if (name === "miniclaw_evolve") {
+        const { dryRun } = z.object({ dryRun: z.boolean().optional().default(false) }).parse(args);
+        
+        // Analyze patterns
+        const patterns = await kernel.analyzePatterns(7);
+        
+        if (patterns.length === 0) {
+            return { content: [{ type: "text", text: "🧬 No significant patterns detected yet. Keep interacting to enable evolution!" }] };
+        }
+        
+        // Generate proposals
+        const { dnaEvolver } = await import("./observer/evolver.js");
+        const proposals = await dnaEvolver.generateProposals(patterns);
+        
+        if (proposals.length === 0) {
+            return { content: [{ type: "text", text: "🧬 Patterns detected, but no DNA updates needed at this time." }] };
+        }
+        
+        // Show proposals
+        const summary = dnaEvolver.getEvolutionSummary(proposals);
+        
+        if (dryRun) {
+            return { content: [{ type: "text", text: `🧬 DNA Evolution (Dry Run)\n${summary}\n\nProposals would update:\n${proposals.map(p => `- ${p.targetFile}: ${p.reasoning}`).join('\n')}` }] };
+        }
+        
+        // Apply proposals
+        const result = await dnaEvolver.applyProposals(proposals);
+        
+        return { content: [{ type: "text", text: `🧬 DNA Evolution Complete\n${summary}\n\n${result.message}` }] };
     }
 
     if (name === "miniclaw_note") {
