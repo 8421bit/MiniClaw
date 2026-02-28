@@ -6,10 +6,6 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
-import { hologramStore } from "./observer/hologram.js";
-import { createPatternDetector } from "./observer/patterns.js";
-import { createAutoEvolutionEngine } from "./observer/auto-evolve.js";
-import { createCounterfactualAnalyzer } from "./observer/counterfactual.js";
 
 const execAsync = promisify(exec);
 
@@ -405,15 +401,6 @@ export class ContextKernel {
     private stateLoaded = false;
     private budgetTokens: number;
     private charsPerToken: number;
-    
-    // ★ Observer: Pattern detection for implicit learning
-    private patternDetector = createPatternDetector(hologramStore);
-    
-    // ★ Observer: Auto-evolution engine
-    private autoEvolver = createAutoEvolutionEngine(hologramStore);
-    
-    // ★ Observer: Counterfactual learning
-    private counterfactualAnalyzer = createCounterfactualAnalyzer(hologramStore);
 
     constructor(options: ContextKernelOptions = {}) {
         this.budgetTokens = options.budgetTokens || parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
@@ -1092,18 +1079,6 @@ export class ContextKernel {
         const healthWarnings = await this.checkFileHealth();
         if (healthWarnings.length > 0) {
             context += `\n🏥 ${healthWarnings.join(' | ')}`;
-        }
-
-        // ★ Observer: Learning insights
-        const learningInsights = await this.getLearningInsights();
-        if (learningInsights) {
-            context += learningInsights;
-        }
-
-        // ★ Observer: Counterfactual insights (learning from mistakes)
-        const counterfactualInsights = await this.getCounterfactualInsights();
-        if (counterfactualInsights) {
-            context += counterfactualInsights;
         }
 
         // Error report
@@ -2062,102 +2037,5 @@ export class ContextKernel {
             });
         }
         return tools;
-    }
-
-    // === OBSERVER API: Implicit Learning ===
-
-    /**
-     * Start recording an interaction hologram
-     */
-    observerStartInteraction(input: {
-        text: string;
-        contextFiles: string[];
-        workspaceInfo?: { name: string; gitBranch?: string; techStack: string[] };
-    }): void {
-        hologramStore.startInteraction(input);
-    }
-
-    /**
-     * Record a cognition trace
-     */
-    observerRecordCognition(reasoning: string, confidence: number, toolsConsidered: string[], toolSelected?: string): void {
-        hologramStore.recordCognition({
-            step: Date.now(),
-            reasoning,
-            confidence,
-            toolsConsidered,
-            toolSelected,
-        });
-    }
-
-    /**
-     * Record tool execution
-     */
-    observerRecordToolExecution(toolName: string, input: Record<string, unknown>, output: string | undefined, error: string | undefined, duration: number): void {
-        hologramStore.recordToolExecution({
-            toolName,
-            input,
-            output,
-            error,
-            duration,
-            timestamp: new Date().toISOString(),
-        });
-    }
-
-    /**
-     * Finalize interaction recording
-     */
-    async observerFinalizeInteraction(response: string, responseTime: number): Promise<void> {
-        hologramStore.recordOutput(response);
-        await hologramStore.finalizeInteraction(responseTime);
-    }
-
-    /**
-     * Analyze patterns from recent interactions
-     */
-    async analyzePatterns(days: number = 7): Promise<import("./observer/patterns.js").DetectedPattern[]> {
-        return this.patternDetector.analyzeRecent(days);
-    }
-
-    /**
-     * Get learning insights for display in context
-     */
-    async getLearningInsights(): Promise<string> {
-        const patterns = await this.analyzePatterns(7);
-        if (patterns.length === 0) return '';
-        
-        const topPatterns = patterns.slice(0, 3);
-        return `\n## 🧠 Learning Insights (Observer)\n` + 
-            topPatterns.map(p => `- **${p.type}**: ${p.description} (confidence: ${(p.confidence * 100).toFixed(0)}%)`).join('\n') +
-            `\n`;
-    }
-
-    /**
-     * Get counterfactual insights (learning from mistakes)
-     */
-    async getCounterfactualInsights(): Promise<string> {
-        const insights = await this.counterfactualAnalyzer.analyze(7);
-        if (insights.length === 0) return '';
-        
-        return this.counterfactualAnalyzer.getSummary(insights);
-    }
-
-    /**
-     * Trigger auto-evolution check
-     */
-    async triggerAutoEvolution(): Promise<{ evolved: boolean; message: string }> {
-        return this.autoEvolver.checkAndEvolve();
-    }
-
-    /**
-     * Get auto-evolution status
-     */
-    async getAutoEvolutionStatus(): Promise<{
-        canEvolve: boolean;
-        cooldownRemaining: number;
-        totalEvolutions: number;
-        recentProposals: number;
-    }> {
-        return this.autoEvolver.getStatus();
     }
 }

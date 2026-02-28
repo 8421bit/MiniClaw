@@ -5,10 +5,6 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
-import { hologramStore } from "./observer/hologram.js";
-import { createPatternDetector } from "./observer/patterns.js";
-import { createAutoEvolutionEngine } from "./observer/auto-evolve.js";
-import { createCounterfactualAnalyzer } from "./observer/counterfactual.js";
 const execAsync = promisify(exec);
 // --- Configuration & Constants ---
 const HOME_DIR = process.env.HOME || process.cwd();
@@ -250,12 +246,6 @@ export class ContextKernel {
     stateLoaded = false;
     budgetTokens;
     charsPerToken;
-    // ★ Observer: Pattern detection for implicit learning
-    patternDetector = createPatternDetector(hologramStore);
-    // ★ Observer: Auto-evolution engine
-    autoEvolver = createAutoEvolutionEngine(hologramStore);
-    // ★ Observer: Counterfactual learning
-    counterfactualAnalyzer = createCounterfactualAnalyzer(hologramStore);
     constructor(options = {}) {
         this.budgetTokens = options.budgetTokens || parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
         this.charsPerToken = options.charsPerToken || 3.6;
@@ -874,16 +864,6 @@ export class ContextKernel {
         const healthWarnings = await this.checkFileHealth();
         if (healthWarnings.length > 0) {
             context += `\n🏥 ${healthWarnings.join(' | ')}`;
-        }
-        // ★ Observer: Learning insights
-        const learningInsights = await this.getLearningInsights();
-        if (learningInsights) {
-            context += learningInsights;
-        }
-        // ★ Observer: Counterfactual insights (learning from mistakes)
-        const counterfactualInsights = await this.getCounterfactualInsights();
-        if (counterfactualInsights) {
-            context += counterfactualInsights;
         }
         // Error report
         if (this.bootErrors.length > 0) {
@@ -1792,83 +1772,5 @@ export class ContextKernel {
             });
         }
         return tools;
-    }
-    // === OBSERVER API: Implicit Learning ===
-    /**
-     * Start recording an interaction hologram
-     */
-    observerStartInteraction(input) {
-        hologramStore.startInteraction(input);
-    }
-    /**
-     * Record a cognition trace
-     */
-    observerRecordCognition(reasoning, confidence, toolsConsidered, toolSelected) {
-        hologramStore.recordCognition({
-            step: Date.now(),
-            reasoning,
-            confidence,
-            toolsConsidered,
-            toolSelected,
-        });
-    }
-    /**
-     * Record tool execution
-     */
-    observerRecordToolExecution(toolName, input, output, error, duration) {
-        hologramStore.recordToolExecution({
-            toolName,
-            input,
-            output,
-            error,
-            duration,
-            timestamp: new Date().toISOString(),
-        });
-    }
-    /**
-     * Finalize interaction recording
-     */
-    async observerFinalizeInteraction(response, responseTime) {
-        hologramStore.recordOutput(response);
-        await hologramStore.finalizeInteraction(responseTime);
-    }
-    /**
-     * Analyze patterns from recent interactions
-     */
-    async analyzePatterns(days = 7) {
-        return this.patternDetector.analyzeRecent(days);
-    }
-    /**
-     * Get learning insights for display in context
-     */
-    async getLearningInsights() {
-        const patterns = await this.analyzePatterns(7);
-        if (patterns.length === 0)
-            return '';
-        const topPatterns = patterns.slice(0, 3);
-        return `\n## 🧠 Learning Insights (Observer)\n` +
-            topPatterns.map(p => `- **${p.type}**: ${p.description} (confidence: ${(p.confidence * 100).toFixed(0)}%)`).join('\n') +
-            `\n`;
-    }
-    /**
-     * Get counterfactual insights (learning from mistakes)
-     */
-    async getCounterfactualInsights() {
-        const insights = await this.counterfactualAnalyzer.analyze(7);
-        if (insights.length === 0)
-            return '';
-        return this.counterfactualAnalyzer.getSummary(insights);
-    }
-    /**
-     * Trigger auto-evolution check
-     */
-    async triggerAutoEvolution() {
-        return this.autoEvolver.checkAndEvolve();
-    }
-    /**
-     * Get auto-evolution status
-     */
-    async getAutoEvolutionStatus() {
-        return this.autoEvolver.getStatus();
     }
 }
