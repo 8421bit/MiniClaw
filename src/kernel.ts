@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
 import { hologramStore } from "./observer/hologram.js";
 import { createPatternDetector } from "./observer/patterns.js";
+import { createAutoEvolutionEngine } from "./observer/auto-evolve.js";
+import { createCounterfactualAnalyzer } from "./observer/counterfactual.js";
 
 const execAsync = promisify(exec);
 
@@ -406,6 +408,12 @@ export class ContextKernel {
     
     // ★ Observer: Pattern detection for implicit learning
     private patternDetector = createPatternDetector(hologramStore);
+    
+    // ★ Observer: Auto-evolution engine
+    private autoEvolver = createAutoEvolutionEngine(hologramStore);
+    
+    // ★ Observer: Counterfactual learning
+    private counterfactualAnalyzer = createCounterfactualAnalyzer(hologramStore);
 
     constructor(options: ContextKernelOptions = {}) {
         this.budgetTokens = options.budgetTokens || parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
@@ -1090,6 +1098,12 @@ export class ContextKernel {
         const learningInsights = await this.getLearningInsights();
         if (learningInsights) {
             context += learningInsights;
+        }
+
+        // ★ Observer: Counterfactual insights (learning from mistakes)
+        const counterfactualInsights = await this.getCounterfactualInsights();
+        if (counterfactualInsights) {
+            context += counterfactualInsights;
         }
 
         // Error report
@@ -2116,5 +2130,34 @@ export class ContextKernel {
         return `\n## 🧠 Learning Insights (Observer)\n` + 
             topPatterns.map(p => `- **${p.type}**: ${p.description} (confidence: ${(p.confidence * 100).toFixed(0)}%)`).join('\n') +
             `\n`;
+    }
+
+    /**
+     * Get counterfactual insights (learning from mistakes)
+     */
+    async getCounterfactualInsights(): Promise<string> {
+        const insights = await this.counterfactualAnalyzer.analyze(7);
+        if (insights.length === 0) return '';
+        
+        return this.counterfactualAnalyzer.getSummary(insights);
+    }
+
+    /**
+     * Trigger auto-evolution check
+     */
+    async triggerAutoEvolution(): Promise<{ evolved: boolean; message: string }> {
+        return this.autoEvolver.checkAndEvolve();
+    }
+
+    /**
+     * Get auto-evolution status
+     */
+    async getAutoEvolutionStatus(): Promise<{
+        canEvolve: boolean;
+        cooldownRemaining: number;
+        totalEvolutions: number;
+        recentProposals: number;
+    }> {
+        return this.autoEvolver.getStatus();
     }
 }

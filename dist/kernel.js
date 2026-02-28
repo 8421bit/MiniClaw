@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
 import { hologramStore } from "./observer/hologram.js";
 import { createPatternDetector } from "./observer/patterns.js";
+import { createAutoEvolutionEngine } from "./observer/auto-evolve.js";
+import { createCounterfactualAnalyzer } from "./observer/counterfactual.js";
 const execAsync = promisify(exec);
 // --- Configuration & Constants ---
 const HOME_DIR = process.env.HOME || process.cwd();
@@ -250,6 +252,10 @@ export class ContextKernel {
     charsPerToken;
     // ★ Observer: Pattern detection for implicit learning
     patternDetector = createPatternDetector(hologramStore);
+    // ★ Observer: Auto-evolution engine
+    autoEvolver = createAutoEvolutionEngine(hologramStore);
+    // ★ Observer: Counterfactual learning
+    counterfactualAnalyzer = createCounterfactualAnalyzer(hologramStore);
     constructor(options = {}) {
         this.budgetTokens = options.budgetTokens || parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
         this.charsPerToken = options.charsPerToken || 3.6;
@@ -873,6 +879,11 @@ export class ContextKernel {
         const learningInsights = await this.getLearningInsights();
         if (learningInsights) {
             context += learningInsights;
+        }
+        // ★ Observer: Counterfactual insights (learning from mistakes)
+        const counterfactualInsights = await this.getCounterfactualInsights();
+        if (counterfactualInsights) {
+            context += counterfactualInsights;
         }
         // Error report
         if (this.bootErrors.length > 0) {
@@ -1838,5 +1849,26 @@ export class ContextKernel {
         return `\n## 🧠 Learning Insights (Observer)\n` +
             topPatterns.map(p => `- **${p.type}**: ${p.description} (confidence: ${(p.confidence * 100).toFixed(0)}%)`).join('\n') +
             `\n`;
+    }
+    /**
+     * Get counterfactual insights (learning from mistakes)
+     */
+    async getCounterfactualInsights() {
+        const insights = await this.counterfactualAnalyzer.analyze(7);
+        if (insights.length === 0)
+            return '';
+        return this.counterfactualAnalyzer.getSummary(insights);
+    }
+    /**
+     * Trigger auto-evolution check
+     */
+    async triggerAutoEvolution() {
+        return this.autoEvolver.checkAndEvolve();
+    }
+    /**
+     * Get auto-evolution status
+     */
+    async getAutoEvolutionStatus() {
+        return this.autoEvolver.getStatus();
     }
 }
