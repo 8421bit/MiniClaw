@@ -22,8 +22,7 @@ const __dirname = path.dirname(__filename);
 const INTERNAL_TEMPLATES_DIR = path.resolve(__dirname, "..", "templates");
 const INTERNAL_SKILLS_DIR = path.join(INTERNAL_TEMPLATES_DIR, "skills");
 // Context budget (configurable via env)
-const DEFAULT_TOKEN_BUDGET = parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
-const CHARS_PER_TOKEN = 4;
+const SKELETON_THRESHOLD = 300; // Lower threshold to trigger skeletonization even in small remaining slices
 /** Read skill extension field: metadata.{key} (protocol) → frontmatter.{key} (legacy) */
 function getSkillMeta(fm, key) {
     const meta = fm['metadata'];
@@ -228,7 +227,6 @@ function getTimeMode(hour) {
         return "evening";
     return "night";
 }
-// === The Kernel ===
 export class ContextKernel {
     skillCache = new SkillCache();
     entityStore = new EntityStore();
@@ -239,11 +237,20 @@ export class ContextKernel {
             totalBootMs: 0, lastActivity: "", skillUsage: {},
             dailyDistillations: 0,
             activeHours: new Array(24).fill(0), fileChanges: {},
+            metabolicDebt: {},
         },
         previousHashes: {},
         heartbeat: { ...DEFAULT_HEARTBEAT },
+        attentionWeights: {},
     };
     stateLoaded = false;
+    budgetTokens;
+    charsPerToken;
+    constructor(options = {}) {
+        this.budgetTokens = options.budgetTokens || parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
+        this.charsPerToken = options.charsPerToken || 3.6;
+        console.error(`[MiniClaw] Kernel initialized with budget: ${this.budgetTokens} tokens, chars/token: ${this.charsPerToken}`);
+    }
     // --- State Persistence ---
     async loadState() {
         if (this.stateLoaded)
@@ -251,12 +258,29 @@ export class ContextKernel {
         try {
             const raw = await fs.readFile(STATE_FILE, "utf-8");
             const data = JSON.parse(raw);
-            if (data.analytics)
+            let migrated = false;
+            if (data.analytics) {
                 this.state.analytics = { ...this.state.analytics, ...data.analytics };
+                if (!data.analytics.metabolicDebt) {
+                    this.state.analytics.metabolicDebt = {};
+                    migrated = true;
+                }
+            }
             if (data.previousHashes)
                 this.state.previousHashes = data.previousHashes;
             if (data.heartbeat)
                 this.state.heartbeat = { ...DEFAULT_HEARTBEAT, ...data.heartbeat };
+            if (data.genomeBaseline)
+                this.state.genomeBaseline = data.genomeBaseline;
+            if (data.attentionWeights) {
+                this.state.attentionWeights = data.attentionWeights;
+            }
+            else {
+                this.state.attentionWeights = {};
+                migrated = true;
+            }
+            if (migrated)
+                await this.saveState();
         }
         catch { /* first run, use defaults */ }
         this.stateLoaded = true;
@@ -275,9 +299,13 @@ export class ContextKernel {
         Object.assign(this.state.heartbeat, updates);
         await this.saveState();
     }
-    async trackTool(toolName) {
+    async trackTool(toolName, energyEstimate) {
         await this.loadState();
         this.state.analytics.toolCalls[toolName] = (this.state.analytics.toolCalls[toolName] || 0) + 1;
+        // Metabolic Cost (Energy ATP)
+        if (energyEstimate) {
+            this.state.analytics.metabolicDebt[toolName] = (this.state.analytics.metabolicDebt[toolName] || 0) + energyEstimate;
+        }
         this.state.analytics.lastActivity = new Date().toISOString();
         // ★ Track active hours for self-observation
         const hour = new Date().getHours();
@@ -285,11 +313,32 @@ export class ContextKernel {
             this.state.analytics.activeHours = new Array(24).fill(0);
         }
         this.state.analytics.activeHours[hour] = (this.state.analytics.activeHours[hour] || 0) + 1;
+        // Boost attention to the tool and its associated skill
+        const skillName = toolName.startsWith('skill_') ? toolName.split('_')[1] : null;
+        if (skillName)
+            await this.boostAttention(`skill:${skillName}`);
+        await this.boostAttention(toolName);
         await this.saveState();
     }
-    async trackPrompt(promptName) {
+    async boostAttention(tag, amount = 0.1) {
+        await this.loadState();
+        const current = this.state.attentionWeights[tag] || 0;
+        this.state.attentionWeights[tag] = Math.min(1.0, current + amount);
+        await this.saveState();
+    }
+    decayAttention() {
+        // Simple forgetting curve: reduce all weights by 5%
+        for (const tag in this.state.attentionWeights) {
+            this.state.attentionWeights[tag] *= 0.95;
+            if (this.state.attentionWeights[tag] < 0.01)
+                delete this.state.attentionWeights[tag];
+        }
+    }
+    async trackPrompt(promptName, energyEstimate = 200) {
         await this.loadState();
         this.state.analytics.promptsUsed[promptName] = (this.state.analytics.promptsUsed[promptName] || 0) + 1;
+        this.state.analytics.metabolicDebt[promptName] = (this.state.analytics.metabolicDebt[promptName] || 0) + energyEstimate;
+        this.boostAttention(promptName);
         await this.saveState();
     }
     async getAnalytics() {
@@ -430,9 +479,11 @@ export class ContextKernel {
                 dailyDistillations: 0,
                 activeHours: new Array(24).fill(0),
                 fileChanges: {},
+                metabolicDebt: {},
             },
             heartbeat: { ...DEFAULT_HEARTBEAT },
-            previousHashes: {}
+            previousHashes: {},
+            attentionWeights: {},
         };
         this.stashLoaded = false;
         this.stateLoaded = false;
@@ -446,26 +497,35 @@ export class ContextKernel {
             this.loadState(),
             this.entityStore.load(),
         ]);
-        // --- MODE: MINIMAL (Sub-Agent) ---
-        if (mode.type === "minimal") {
-            const templates = await this.loadTemplates();
-            const runtime = this.senseRuntime();
-            let context = `# Subagent Context\n\n`;
-            if (templates.subagent) {
-                context += `${templates.subagent}\n\n`;
+        // ★ Attention Decay (Forgetting Curve)
+        this.decayAttention();
+        await this.saveState();
+        // ★ Genetic Proofreading (L-Immun) - Universal health check
+        const currentGenome = await this.calculateGenomeHash();
+        const hasBaseline = this.state.genomeBaseline && Object.keys(this.state.genomeBaseline).length > 0;
+        if (!hasBaseline) {
+            this.state.genomeBaseline = currentGenome;
+            await this.saveState(); // Ensure baseline is persisted on first boot
+        }
+        else {
+            const deviations = this.proofreadGenome(currentGenome, this.state.genomeBaseline);
+            if (deviations.length > 0) {
+                this.bootErrors.push(`🧬 Immune System: ${deviations.join(', ')}`);
             }
-            else {
-                context += `You are a subagent. Focus on the task. No side effects.\n\n`;
+        }
+        // --- MODE: MINIMAL (Sub-Agent) Task Setup ---
+        let subagentTaskContent = "";
+        if (mode.type === "minimal") {
+            subagentTaskContent += `# Subagent Context\n\n`;
+            if (this.bootErrors.length > 0) {
+                const healthLines = this.bootErrors.map(e => `> ${e}`).join('\n');
+                subagentTaskContent += `> [!CAUTION]\n> SYSTEM HEALTH WARNINGS:\n${healthLines}\n\n`;
             }
             if (mode.task) {
-                context += `## 🎯 YOUR ASSIGNED TASK\n${mode.task}\n\n`;
+                subagentTaskContent += `## 🎯 YOUR ASSIGNED TASK\n${mode.task}\n\n`;
             }
-            context += `## Runtime\n`;
-            context += `Runtime: agent=subagent | host=${os.hostname()} | os=${runtime.os} | node=${runtime.node}\n`;
-            context += `Reasoning: on\n\n`;
-            return context;
         }
-        // --- MODE: FULL (Main Agent) ---
+        // --- CORE CONTEXT ASSEMBLY ---
         // ★ ACE: Detect time mode
         const now = new Date();
         const hour = now.getHours();
@@ -480,6 +540,7 @@ export class ContextKernel {
             this.detectWorkspace(),
             this.getHeartbeatState(),
         ]);
+        const epigenetics = await this.loadEpigenetics(workspaceInfo);
         const runtime = this.senseRuntime();
         // ★ ACE: Continuation detection
         const continuation = this.detectContinuation(memoryStatus.todayContent);
@@ -506,6 +567,14 @@ export class ContextKernel {
         // Priority 10: Identity file
         if (templates.identity) {
             sections.push({ name: "IDENTITY.md", content: this.formatFile("IDENTITY.md", templates.identity), priority: 10 });
+        }
+        // ★ Phase 29: Epigenetic Modifiers (Project-Specific DNA)
+        if (epigenetics) {
+            sections.push({
+                name: "EPIGENETICS",
+                content: `\n---\n\n## 🧬 Epigenetic Modifiers (Project Override)\n> [!IMPORTANT]\n> The following rules correspond specifically to the current workspace and OVERRIDE general behavior.\n\n${epigenetics}\n`,
+                priority: 9 // High priority, just below core identity
+            });
         }
         // ★ Priority 10: ACE Time Mode + Continuation
         let aceContent = `## 🧠 Adaptive Context Engine\n`;
@@ -704,6 +773,17 @@ export class ContextKernel {
             }
         }
         catch { /* vitals should never break boot */ }
+        // ★ Inflammatory Response (L-Immun)
+        if (this.state.genomeBaseline) {
+            const deviations = this.proofreadGenome(await this.calculateGenomeHash(), this.state.genomeBaseline);
+            if (deviations.length > 0) {
+                sections.push({
+                    name: "immune_response",
+                    content: `\n> [!CAUTION]\n> INFLAMMATORY RESPONSE: Genetic Mutation Detected!\n> Core DNA deviation found: ${deviations.join(', ')}.\n> Integrity of IDENTITY/SOUL may be compromised. Verify your core files or run 'miniclaw_heal' to restore baseline.\n`,
+                    priority: 10, // Max priority
+                });
+            }
+        }
         // ★ Dynamic Files: AI-created files with boot-priority
         if (templates.dynamicFiles.length > 0) {
             for (const df of templates.dynamicFiles) {
@@ -716,8 +796,21 @@ export class ContextKernel {
                 });
             }
         }
+        // ★ Phase 30: Gene Silencing (Cellular Differentiation)
+        if (mode.type === "minimal" && mode.suppressedGenes && mode.suppressedGenes.length > 0) {
+            const silenced = new Set(mode.suppressedGenes);
+            // In place filter
+            for (let i = sections.length - 1; i >= 0; i--) {
+                if (silenced.has(sections[i].name)) {
+                    sections.splice(i, 1);
+                }
+            }
+        }
+        if (mode.type === "minimal") {
+            sections.unshift({ name: "subagent_header", content: subagentTaskContent, priority: 100 });
+        }
         // ★ Context Budget Manager
-        const compiled = this.compileBudget(sections, DEFAULT_TOKEN_BUDGET);
+        const compiled = this.compileBudget(sections, this.budgetTokens);
         // ★ Content Hash Delta Detection
         const currentHashes = {};
         for (const section of sections) {
@@ -730,6 +823,13 @@ export class ContextKernel {
         const bootMs = Date.now() - bootStart;
         this.state.analytics.totalBootMs += bootMs;
         this.state.analytics.lastActivity = new Date().toISOString();
+        // ★ Context Pressure Detection: trigger synapse reflex if pressure is high
+        if (compiled.utilizationPct > 90) {
+            const hbState = await this.getHeartbeatState();
+            if (!hbState.needsSubconsciousReflex) {
+                await this.updateHeartbeatState({ needsSubconsciousReflex: true, triggerTool: "skill_sys_synapse_run" });
+            }
+        }
         await this.saveState();
         // --- Final assembly ---
         let context = `# Project Context\n\n`;
@@ -1080,10 +1180,43 @@ export class ContextKernel {
         }
         return briefing;
     }
+    async getMetabolicStatus() {
+        await this.loadState();
+        const debt = this.state.analytics.metabolicDebt;
+        const weights = this.state.attentionWeights;
+        let report = `## 🔋 Metabolic Status (L-Metabol)\n\n`;
+        report += `### ⚡ Energy Debt (ATP/Tokens)\n`;
+        const sortedDebt = Object.entries(debt).sort((a, b) => b[1] - a[1]);
+        if (sortedDebt.length > 0) {
+            for (const [tool, cost] of sortedDebt.slice(0, 10)) {
+                report += `- **${tool}**: ${cost} tokens\n`;
+            }
+        }
+        else {
+            report += `No energy debt recorded yet.\n`;
+        }
+        report += `\n### 🧠 Attention Landscape (Hebbian Weights)\n`;
+        const sortedWeights = Object.entries(weights).sort((a, b) => b[1] - a[1]);
+        if (sortedWeights.length > 0) {
+            for (const [tag, weight] of sortedWeights.slice(0, 10)) {
+                const bar = "█".repeat(Math.round(weight * 10)) + "░".repeat(10 - Math.round(weight * 10));
+                report += `- **${tag}**: [${bar}] ${(weight * 100).toFixed(0)}%\n`;
+            }
+        }
+        else {
+            report += `No attention focus recorded yet.\n`;
+        }
+        return report;
+    }
     // === Budget Compiler ===
     compileBudget(sections, budgetTokens) {
-        const sorted = [...sections].sort((a, b) => b.priority - a.priority);
-        const maxChars = budgetTokens * CHARS_PER_TOKEN;
+        // Sort by Priority + Attention Weight
+        const sorted = [...sections].sort((a, b) => {
+            const weightA = this.state.attentionWeights[a.name] || 0;
+            const weightB = this.state.attentionWeights[b.name] || 0;
+            return (b.priority + weightB) - (a.priority + weightA);
+        });
+        const maxChars = budgetTokens * this.charsPerToken;
         let output = "";
         let totalChars = 0;
         const truncatedSections = [];
@@ -1095,11 +1228,17 @@ export class ContextKernel {
             }
             else {
                 const remaining = maxChars - totalChars;
-                if (remaining > 200) {
-                    const truncated = section.content.substring(0, remaining - 50) +
-                        `\n\n... [${section.name}: truncated, ${sectionChars - remaining} chars omitted]\n`;
-                    output += truncated;
-                    totalChars += truncated.length;
+                if (remaining > SKELETON_THRESHOLD) {
+                    const skeleton = this.skeletonizeMarkdown(section.name, section.content, remaining);
+                    output += skeleton;
+                    totalChars += skeleton.length;
+                    truncatedSections.push(section.name);
+                }
+                else if (remaining > 100) {
+                    // Very small slice: just the footer
+                    const footer = `\n\n... [${section.name}: truncated, budget tight]\n`;
+                    output += footer;
+                    totalChars += footer.length;
                     truncatedSections.push(section.name);
                 }
                 else {
@@ -1107,12 +1246,108 @@ export class ContextKernel {
                 }
             }
         }
-        const totalTokens = Math.round(totalChars / CHARS_PER_TOKEN);
+        const totalTokens = Math.round(totalChars / this.charsPerToken);
         return {
             output, totalChars, totalTokens, budgetTokens,
             utilizationPct: Math.round((totalTokens / budgetTokens) * 100),
             truncatedSections,
         };
+    }
+    /**
+     * Context Skeletonization:
+     * Instead of a blind cut, we preserve the "Shape" of the document.
+     * Retains Frontmatter, Headers, and the most recent tail part.
+     */
+    skeletonizeMarkdown(name, content, budgetChars) {
+        if (content.length <= budgetChars)
+            return content;
+        const lines = content.split('\n');
+        let skeleton = "";
+        let currentChars = 0;
+        // 1. Always keep Frontmatter (Priority 1)
+        const fmMatch = content.match(/^---\n[\s\S]*?\n---/);
+        if (fmMatch) {
+            skeleton += fmMatch[0] + "\n\n";
+            currentChars += skeleton.length;
+        }
+        // 2. Scan for Headers to maintain cognitive map (Priority 2)
+        const headerLines = lines.filter(l => l.startsWith('#') && !skeleton.includes(l));
+        const headerBlock = headerLines.join('\n') + "\n\n";
+        if (currentChars + headerBlock.length < budgetChars * 0.4) {
+            skeleton += headerBlock;
+            currentChars += headerBlock.length;
+        }
+        // 3. Keep the Tail (Recent History/Context) (Priority 3)
+        const footer = `\n\n... [${name}: skeletonized, ${content.length - budgetChars} chars omitted] ...\n\n`;
+        const remainingBudget = budgetChars - currentChars - footer.length;
+        if (remainingBudget > 200) {
+            const tail = content.substring(content.length - remainingBudget);
+            skeleton += tail + footer;
+        }
+        else {
+            skeleton += footer;
+        }
+        return skeleton;
+    }
+    // === Genetic Proofreading (L-Immun) ===
+    async calculateGenomeHash() {
+        const hashes = {};
+        const germlineDNA = ["IDENTITY.md", "SOUL.md", "AGENTS.md"];
+        for (const name of germlineDNA) {
+            try {
+                const content = await fs.readFile(path.join(MINICLAW_DIR, name), "utf-8");
+                hashes[name] = hashString(content);
+            }
+            catch { /* ignore missing germline files */ }
+        }
+        return hashes;
+    }
+    proofreadGenome(current, baseline) {
+        const deviations = [];
+        for (const [name, hash] of Object.entries(baseline)) {
+            if (!(name in current)) {
+                deviations.push(`Missing: ${name}`);
+            }
+            else if (current[name] !== hash) {
+                deviations.push(`Mutated: ${name}`);
+            }
+        }
+        return deviations;
+    }
+    async updateGenomeBaseline() {
+        const backupDir = path.join(MINICLAW_DIR, ".backup", "genome");
+        await fs.mkdir(backupDir, { recursive: true });
+        const current = await this.calculateGenomeHash();
+        this.state.genomeBaseline = current;
+        for (const name of Object.keys(current)) {
+            try {
+                const content = await fs.readFile(path.join(MINICLAW_DIR, name), "utf-8");
+                await atomicWrite(path.join(backupDir, name), content);
+            }
+            catch { /* skip missing */ }
+        }
+        await this.saveState();
+        console.log(`[MiniClaw] Genome baseline updated and backed up for: ${Object.keys(current).join(', ')}`);
+    }
+    async restoreGenome() {
+        const baseline = this.state.genomeBaseline || {};
+        const current = await this.calculateGenomeHash();
+        const deviations = this.proofreadGenome(current, baseline);
+        const backupDir = path.join(MINICLAW_DIR, ".backup", "genome");
+        const restored = [];
+        for (const dev of deviations) {
+            const fileName = dev.split(': ')[1];
+            if (!fileName)
+                continue;
+            try {
+                const backupPath = path.join(backupDir, fileName);
+                const content = await fs.readFile(backupPath, "utf-8");
+                await atomicWrite(path.join(MINICLAW_DIR, fileName), content);
+                restored.push(fileName);
+            }
+            catch { /* backup missing or restore failed */ }
+        }
+        return restored;
     }
     // === Delta Detection ===
     computeDelta(currentHashes, previousHashes) {
@@ -1150,6 +1385,17 @@ export class ContextKernel {
             cwd: process.cwd(),
             agentId: gitBranch ? `main (branch: ${gitBranch})` : "main"
         };
+    }
+    async loadEpigenetics(workspaceInfo) {
+        if (!workspaceInfo)
+            return null;
+        try {
+            const epigeneticPath = path.join(workspaceInfo.path, ".miniclaw", "EPIGENETICS.md");
+            return await fs.readFile(epigeneticPath, "utf-8");
+        }
+        catch {
+            return null;
+        }
     }
     async scanMemory() {
         const today = new Date().toISOString().split('T')[0];
@@ -1386,8 +1632,8 @@ export class ContextKernel {
         if (memoryStatus.entryCount > 20) {
             return { shouldDistill: true, reason: `${memoryStatus.entryCount} entries (>20)`, urgency: 'high' };
         }
-        const logTokens = Math.round(dailyLogBytes / CHARS_PER_TOKEN);
-        const budgetPressure = logTokens / DEFAULT_TOKEN_BUDGET;
+        const logTokens = Math.round(dailyLogBytes / this.charsPerToken);
+        const budgetPressure = logTokens / this.budgetTokens;
         if (budgetPressure > 0.4) {
             return { shouldDistill: true, reason: `log consuming ${Math.round(budgetPressure * 100)}% of budget`, urgency: 'high' };
         }
@@ -1517,9 +1763,10 @@ export class ContextKernel {
         }
         else if (defaultExecScript) {
             // If there's an 'exec' script but no explicit tools list, register a default runner
+            const isSys = skillName.startsWith('sys_');
             tools.push({
                 skillName,
-                toolName: `skill_${skillName}_run`,
+                toolName: isSys ? skillName : `skill_${skillName}_run`,
                 description: `Execute skill script: ${defaultExecScript}`,
                 exec: defaultExecScript
             });

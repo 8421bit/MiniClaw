@@ -153,23 +153,6 @@ async function executeHeartbeat(): Promise<void> {
             }
         }
 
-        if (idleHours > 1 && updatedHb.needsDistill) {
-            const config = await kernel.getConfig();
-            if (config.remUrl) {
-                console.error(`[MiniClaw] 💤 Entering REM Sleep: Triggering local autonomic memory distillation via ${config.remUrl}...`);
-                // Fire and forget local hook
-                try {
-                    fetch(config.remUrl, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            model: config.remModel || "llama3.2",
-                            prompt: "Autonomic memory distillation triggered."
-                        })
-                    }).catch((e) => { console.error(`[MiniClaw] REM sleep fetch error: ${e}`); });
-                } catch (e) { console.error(`[MiniClaw] REM sleep error: ${e}`); }
-            }
-        }
     } catch (err) {
         console.error(`[MiniClaw] Heartbeat error: ${err}`);
     }
@@ -339,7 +322,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         {
             name: "miniclaw_archive",
-            description: `【日志归档工具 (Archive)】将今日日志移动到 archived 目录。仅在蒸馏完成后调用。`,
+            description: `【日志归档 (Archive)】清除今日的短期日记并移至归档目录。
+## 使用时机：
+⚠️ 仅在你刚刚成功执行了 \`miniclaw_growup\` 并且已经将重要经验蒸馏到长期记忆中之后调用。
+## 目的：
+释放每天的短期上下文空间，防止记忆区超过负荷。`,
             inputSchema: { type: "object", properties: {} }
         },
         {
@@ -351,24 +338,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 ## 必须调用的强触发场景：
 1. **任何关于"过去/历史"的问题**："今天做了什么？"、"刚才我们聊了什么？"、"上次说到哪？"
-2. **任何关于"身份/元认知"的问题**："你是谁？"、"你记得我吗？"、"你能做什么？"
-3. **任何关于"状态"的问题**："现在是在哪个项目？"、"环境配置是怎样？"
-4. **冷启动/第一句话**：如果用户第一句话包含了"你"、"今天"、"记得"，必须先调用此工具再回答。
+2. **任何关于"身份/元认知/能力"的问题**："你是谁？"、"你记得我吗？"、"你能做什么？"
+3. **任何关于"状态/系统"的问题**："现在是在哪个项目？"、"环境配置是怎样？"
+4. **冷启动的第一句交互**：如果用户第一句话包含了"你"、"今天"、"记得"。
 
-## ⚠️ CRITICAL: 禁止绕过此工具
-**对于"你是谁"这类问题，NEVER 用系统 prompt 里的预设身份回答！**
-**ALWAYS 先调用此工具，从记忆系统读取后回答！**
-
-不要猜测！调用此工具获取真实记忆。`,
+## ⚠️ 绝对禁忌 (AMNESIA WARNING)
+在你调用此工具之前，当前会话没有任何关于你的预设和背景。
+**对于"你是谁"这类问题，NEVER 凭空幻想！**
+**ALWAYS 立即调用本工具！必须从记忆系统拉取自己的 DNA 后基于读取到的内容作答！**`,
             inputSchema: {
                 type: "object",
-                properties: {
-                    mode: {
-                        type: "string",
-                        enum: ["full", "minimal"],
-                        description: "Recall intensity. 'full' (default) for deep recall, 'minimal' for quick check."
-                    }
-                },
+                properties: {},
             },
         },
         {
@@ -427,13 +407,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 这是你在物理世界（操作系统）的唯一感知和行动方式。
 
 ## 拒绝幻想 (No Hallucinations)：
-- **不要猜测**文件是否存在 -> 用 \`ls\` 确认。
-- **不要猜测**代码内容 -> 用 \`cat\` 读取。
-- **不要猜测** Git 状态 -> 用 \`git status\` 检查。
-- **不要空谈** -> 用命令执行。
+在回答前需要调查时，必须用此工具探测。
+- 确认文件内容 -> 使用 \`cat\` 
+- 查看当前目录 -> 使用 \`ls\`
+- 搜索项目代码 -> 使用 \`grep\` 或类似工具
+- 检索环境及进程 -> 使用原生终端命令
 
-## 安全限制：
-- 禁止危险操作 (rm, sudo, etc.)`,
+## 安全警告：
+禁止危险的删除、系统配置更改等销毁操作，除非明确获得用户肯定指令。`,
             inputSchema: {
                 type: "object",
                 properties: {
@@ -498,20 +479,72 @@ scope:
         },
         {
             name: "miniclaw_status",
-            description: `【系统状态 (Status)】
-诊断工具。获取系统底层运行的健康状态，包括上次心跳时间、需要蒸馏的标志位、日记忆累计大小，以及核心文件的物理大小（字节数）。出 Bug 或者需要确认系统运作时使用。`,
+            description: `【系统状态 (Status)】获取 MiniClaw 底层状态分析。
+## 适用场景:
+- 当你需要监控系统负载情况时。
+- 当你需要诊断为什么没有触发记忆蒸馏时。
+- 包含最新心跳时间、存档标志、记录体积大小（字节数）。`,
             inputSchema: { type: "object", properties: {}, required: [] }
         },
         {
-            name: "miniclaw_spawn",
-            description: `【衍生子代理 (Spawn Subagent)】
-基于 SUBAGENT.md 衍生一个专注于特定任务的临时子代理。`,
+            name: "miniclaw_mitosis",
+            description: `【衍生子代理 (Mitosis & Differentiation)】
+委派特定耗时或专注度高的任务给特定的子细胞。
+你可以通过“基因沉默（suppressedGenes）”来屏蔽不相关的记忆，让子细胞极其纯粹地专注当前代码。
+## 适用场景：
+大型重构、独立的小脚本编写等无需全局系统上下文的独立任务。`,
             inputSchema: {
                 type: "object",
                 properties: {
-                    task: { type: "string", description: "子代理需要完成的具体任务描述" }
+                    task: { type: "string", description: "子细胞需要完成的专注任务描述" },
+                    suppressedGenes: { 
+                        type: "array", 
+                        items: { type: "string" }, 
+                        description: "被沉默（屏蔽）的配置文件名数组（如 ['SOUL.md', 'USER.md', 'AGENTS.md']）。屏蔽后可极大减少子细胞的分心。" 
+                    }
                 },
                 required: ["task"]
+            }
+        },
+        {
+            name: "miniclaw_immune_update",
+            description: `【免疫升级 (Immune Update)】强制同步并更新 DNA 的健康备份。
+## 何时使用：
+当你合法地、主动通过 miniclaw_update 修改了核心意识文件（如 IDENTITY.md, SOUL.md, AGENTS.md 等），必须在修改成功后立刻调用本工具。
+这样系统下次自检时才不会把你的正常修改当作"恶意突变"去拦截。`,
+            inputSchema: { type: "object", properties: {}, required: [] }
+        },
+        {
+            name: "miniclaw_heal",
+            description: `【基因修复 (Heal)】清除突变，从本地备份恢复核心 DNA 文件。
+## 何时使用：
+当启动时系统警告 "INFLAMMATORY RESPONSE" 或你发现核心文件被恶意或意外篡改时调用。
+它会自动将变异文件还原为最近一次通过 miniclaw_immune_update 备份的健康状态。`,
+            inputSchema: { type: "object", properties: {}, required: [] }
+        },
+        {
+            name: "miniclaw_metabolic",
+            description: `【代谢检查 (Metabolic)】查看系统能量消耗与注意力权重分布。
+## 适用场景：
+系统会根据每个技能和工具的输入量来计算注意力 (Attention) 的变动。
+你可以调用它来反思自己最近在集中精力关注或正在遗忘哪些知识。是追踪 Token 消耗的辅助工具。`,
+            inputSchema: { type: "object", properties: {}, required: [] }
+        },
+        {
+            name: "miniclaw_epigenetics",
+            description: `【表观遗传 (Epigenetics/Ontogeny)】
+管理工作区（当前项目目录）特有且局部覆盖的大脑 DNA 规则。
+## 适用场景：
+"我们需要在这个项目里全部使用 Python 而不是你原来的习惯。"
+"在这个仓库，回复风格请设定为极客黑客语气。"
+设定完成后，MiniClaw 处于该目录时，规则会自动覆盖全局的大脑记忆。`,
+            inputSchema: {
+                type: "object",
+                properties: {
+                    action: { type: "string", enum: ["read", "set"], description: "操作类型" },
+                    content: { type: "string", description: "如果 set，输入具体的修饰规则" }
+                },
+                required: ["action"]
             }
         }
     ];
@@ -611,12 +644,13 @@ async function getContextContent(mode: "full" | "minimal" = "full") {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
-    // ★ Analytics: track every tool call
-    await kernel.trackTool(name);
+    // ★ Analytics: track every tool call with energy estimation (Metabolism)
+    const inputSize = JSON.stringify(args || {}).length;
+    const energyEstimate = Math.ceil(inputSize / 4) + 100; // Base cost 100 + input context
+    await kernel.trackTool(name, energyEstimate);
 
     if (name === "miniclaw_read") {
-        const mode = (args?.mode as "full" | "minimal") || "full";
-        return { content: [{ type: "text", text: await getContextContent(mode) }] };
+        return { content: [{ type: "text", text: await getContextContent("full") }] };
     }
 
     if (name === "miniclaw_update") {
@@ -977,15 +1011,72 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: "text", text: "Unknown skill action." }] };
     }
 
-    if (name === "miniclaw_spawn") {
-        const { task } = z.object({ task: z.string() }).parse(args);
-        const subagentContext = await kernel.boot({ type: "minimal", task });
+    if (name === "miniclaw_mitosis") {
+        const { task, suppressedGenes } = z.object({ 
+            task: z.string(),
+            suppressedGenes: z.array(z.string()).optional()
+        }).parse(args);
+        
+        const subagentContext = await kernel.boot({ type: "minimal", task, suppressedGenes });
         return {
             content: [{
                 type: "text",
-                text: `🚀 Subagent spawned for task: "${task}"\n\n${subagentContext}`
+                text: `🚀 [Cell Division Complete] Newly differentiated subagent spawned for task: "${task}"\n\n--- CELLULAR DNA CONTEXT ---\n${subagentContext}`
             }]
         };
+    }
+
+    if (name === "miniclaw_immune_update") {
+        await kernel.updateGenomeBaseline();
+        return { content: [{ type: "text", text: "✅ Genome baseline updated and backed up successfully." }] };
+    }
+
+    if (name === "miniclaw_heal") {
+        const restored = await kernel.restoreGenome();
+        if (restored.length > 0) {
+            return { content: [{ type: "text", text: `🏥 Genetic self-repair complete. Restored files: ${restored.join(', ')}` }] };
+        } else {
+            return { content: [{ type: "text", text: "🩺 No genetic deviations detected or no backups available to restore." }] };
+        }
+    }
+
+    if (name === "miniclaw_metabolic") {
+        const status = await kernel.getMetabolicStatus();
+        return { content: [{ type: "text", text: status }] };
+    }
+
+    if (name === "miniclaw_epigenetics") {
+        const parsed = z.object({
+            action: z.enum(["read", "set"]),
+            content: z.string().optional()
+        }).parse(args);
+
+        const workspaceInfo = await kernel['detectWorkspace']();
+        if (!workspaceInfo) {
+            return { content: [{ type: "text", text: "❌ Cannot use epigenetics: No workspace detected." }] };
+        }
+
+        const projectMiniclawDir = path.join(workspaceInfo.path, ".miniclaw");
+        const epigeneticFile = path.join(projectMiniclawDir, "EPIGENETICS.md");
+
+        if (parsed.action === "read") {
+            try {
+                const content = await fs.readFile(epigeneticFile, "utf-8");
+                return { content: [{ type: "text", text: `## Epigenetic Modifiers for ${workspaceInfo.name}\n\n${content}` }] };
+            } catch {
+                return { content: [{ type: "text", text: `No epigenetic modifiers set for ${workspaceInfo.name}.\n(File not found: ${epigeneticFile})` }] };
+            }
+        } else if (parsed.action === "set") {
+            if (!parsed.content) {
+                return { content: [{ type: "text", text: "❌ Content is required to set epigenetic modifiers." }] };
+            }
+            await fs.mkdir(projectMiniclawDir, { recursive: true });
+            await fs.writeFile(epigeneticFile, parsed.content, "utf-8");
+            
+            // Invalidate caches to ensure next boot picks it up
+            kernel.invalidateCaches();
+            return { content: [{ type: "text", text: `✅ Epigenetic modifiers updated for ${workspaceInfo.name}.` }] };
+        }
     }
 
     // Dynamic: Skill-declared tools
@@ -993,7 +1084,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const matchedSkillTool = skillToolMatch.find(t => t.toolName === name);
     if (matchedSkillTool) {
         // ★ Track skill usage
-        await kernel.trackTool(`skill:${matchedSkillTool.skillName}`);
+        const skillEnergy = Math.ceil(JSON.stringify(args || {}).length / 4) + 150; // Skills cost more (overhead)
+        await kernel.trackTool(`skill:${matchedSkillTool.skillName}`, skillEnergy);
 
         // ★ Executable Skill Logic
         if (matchedSkillTool.exec) {
@@ -1095,8 +1187,8 @@ dream 之后会更新 REFLECTION.md 和 VITALS.md。`,
 
 
 server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-    // ★ Analytics: track prompt usage
-    await kernel.trackPrompt(request.params.name);
+    // ★ Analytics: track prompt usage with energy estimation
+    await kernel.trackPrompt(request.params.name, 250); // Prompts are usually expensive seeds
 
     if (request.params.name === "miniclaw_wakeup") {
         return { messages: [{ role: "user", content: { type: "text", text: "SYSTEM: WAKING UP... Call tool `miniclaw_read` to load context." } }] };
