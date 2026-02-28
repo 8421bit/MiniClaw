@@ -1,12 +1,15 @@
 ---
-summary: "Abstract domain ontology, terminology definitions, and semantic mental models."
+chromosome: "Chr-6"
+gene_type: "knowledge"
+version: 1
+activation: "on-demand"
 boot-priority: 6
 read_when:
   - When encountering project-specific jargon or new architectural concepts
   - When looking for the 'Why' behind specific terminologies
 ---
 
-# CONCEPTS.md — Semantic Graph
+# 🧬 Chr-6: CONCEPTS.md - Knowledge Chromosome
 
 _Meaning is context-dependent. Define your world._
 

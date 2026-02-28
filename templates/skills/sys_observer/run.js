@@ -196,10 +196,28 @@ async function triggerEvolution(miniclawDir) {
     state.totalEvolutions++;
     await fs.writeFile(stateFile, JSON.stringify(state, null, 2));
 
-    // Write proposals to heartbeat for user review
-    const heartbeatFile = path.join(miniclawDir, "HEARTBEAT.md");
-    const note = `\n> [!NOTE]\n> **🧬 Observer Evolution Proposal (${new Date().toISOString()})**\n> Detected ${strongPatterns.length} strong patterns.\n> Proposals:\n${proposals.map(p => `> - ${p.target}: ${p.reasoning}`).join("\n")}\n> Run with dryRun=false to apply.\n\n`;
-    await fs.appendFile(heartbeatFile, note, "utf-8");
+    // Write evolution log to daily memory
+    const today = new Date().toISOString().split('T')[0];
+    const memoryFile = path.join(miniclawDir, "memory", `${today}.md`);
+    const timestamp = new Date().toISOString();
+    
+    let evolutionLog = `\n## 🧬 Evolution Log\n\n`;
+    evolutionLog += `- [${timestamp}] [EVOLUTION_TRIGGERED] Generation ${state.totalEvolutions}\n`;
+    evolutionLog += `- [${timestamp}] [PATTERNS_DETECTED] ${strongPatterns.length} strong patterns:\n`;
+    for (const p of strongPatterns) {
+        evolutionLog += `  - ${p.type}: ${p.description} (confidence: ${(p.confidence * 100).toFixed(0)}%)\n`;
+    }
+    evolutionLog += `- [${timestamp}] [PROPOSALS_GENERATED] ${proposals.length} DNA updates proposed:\n`;
+    for (const p of proposals) {
+        const chrMap = { "TOOLS.md": "Chr-4", "SOUL.md": "Chr-2", "USER_MODEL.md": "Chr-3" };
+        const chr = chrMap[p.target] || "Unknown";
+        evolutionLog += `  - [GENE_MUTATION] ${chr}: ${p.reasoning}\n`;
+    }
+    evolutionLog += `- [${timestamp}] [STATUS] Pending user approval via miniclaw_update\n\n`;
+    
+    await fs.appendFile(memoryFile, evolutionLog, "utf-8").catch(() => {
+        // If memory file doesn't exist, skip silently
+    });
 
     console.log(JSON.stringify({
         evolved: true,

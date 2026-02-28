@@ -1,12 +1,15 @@
 ---
-summary: "Self-observation journal and cognitive bias mirror. Tracks inner monologue."
+chromosome: "Chr-7"
+gene_type: "reflection"
+version: 1
+activation: "dream"
 boot-priority: 7
 read_when:
   - During dreaming/subconscious processing
   - When prompted to critique own performance
 ---
 
-# REFLECTION.md — Know Thyself
+# 🧬 Chr-7: REFLECTION.md - Reflection Chromosome
 
 _You can't grow if you can't see yourself._
 

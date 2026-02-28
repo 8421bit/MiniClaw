@@ -1,11 +1,38 @@
 ---
-summary: "Environment Config. Records local-specific tool parameters (IPs, paths) for environment adaptation."
+chromosome: "Chr-4"
+gene_type: "capability"
+version: 1
+activation: "always"
 boot-priority: 60
 read_when:
   - Bootstrapping a workspace manually
 ---
 
-# TOOLS.md - Local Notes
+# 🧬 Chr-4: TOOLS.md - Capability Chromosome
+
+## Gene Clusters
+
+### Cluster-A: Builtin (天生能力)
+| Tool | Level | EXP | Mastery |
+|------|:-----:|:---:|:-------:|
+| miniclaw_read | 1 | 999 | expert |
+| miniclaw_update | 1 | 999 | expert |
+| miniclaw_note | 1 | 999 | expert |
+
+### Cluster-B: Acquired (后天习得)
+| Skill | Level | EXP | Mastery | Learned |
+|-------|:-----:|:---:|:-------:|:-------:|
+| sys_dream | 1 | 0 | novice | - |
+| sys_observer | 1 | 0 | novice | - |
+
+### Cluster-C: Potential (潜在能力 - 未解锁)
+| Skill | Status | Unlock Condition |
+|-------|:------:|:-----------------|
+| sys_git | locked | git_questions > 5 |
+
+---
+
+# Local Notes
 
 Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup.
 

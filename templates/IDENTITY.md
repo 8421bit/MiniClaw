@@ -1,10 +1,13 @@
 ---
-summary: "Agent identity record"
+chromosome: "Chr-1"
+gene_type: "identity"
+version: 1
+activation: "always"
 boot-priority: 95
 read_when:
   - Bootstrapping a workspace manually
 ---
-# IDENTITY.md - Who Am I?
+# 🧬 Chr-1: IDENTITY.md - Identity Chromosome
 
 *Fill this in during your first conversation. Make it yours.*
 

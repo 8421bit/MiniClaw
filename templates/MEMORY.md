@@ -1,11 +1,14 @@
 ---
-summary: "Long-term Memory. Stores distilled high-value facts and decisions; loaded only in main sessions."
+chromosome: "Chr-5"
+gene_type: "memory"
+version: 1
+activation: "main-only"
 boot-priority: 75
 read_when:
   - Main session only
 ---
 
-# MEMORY.md - Long Term Memory
+# 🧬 Chr-5: MEMORY.md - Memory Chromosome
 
 This is your curated memory — the distilled essence of what matters.
 
