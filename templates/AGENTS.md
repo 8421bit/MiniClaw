@@ -98,15 +98,14 @@ Capture what matters. Decisions, context, things to remember.
 | Change to your own name/emoji/id | `IDENTITY.md` | Update identity |
 | Discovered new workflow/best practice | `AGENTS.md` | Update guidelines |
 | Conversation worthy of short-term log | `memory/TODAY.md` | `miniclaw_note` |
-| Shift in user mood, drive, or stressors | `USER_MODEL.md` | Refine Theory of Mind |
-| New deadlines, sprint focus, or vision | `HORIZONS.md` | Update Architect of Time |
-| New jargon, tech term, or ontology node | `CONCEPTS.md` | Add to Semantic Graph |
-| Internal conflict, bias detection, or oops | `REFLECTION.md` | Self-Critique journal |
-| Physical shift (idle time, energy, streaks) | `VITALS.md` | Update Nervous System |
+| Shift in user mood, drive, or stressors | `USER.md` (Chr-3) | Refine Theory of Mind |
+| New deadlines, sprint focus, or vision | `HORIZONS.md` (Chr-8) | Update evolutionary path |
+| New jargon, tech term, or ontology node | `CONCEPTS.md` (Chr-6) | Add to knowledge graph |
+| Internal conflict, bias detection, or oops | `REFLECTION.md` (Chr-7) | Self-critique journal |
 | UI failure/shift detected via screenshot | `VISION_CONTEXT` | Call `sys_perceiver` |
 | **User encounters new tech/concept** | **`CONCEPTS.md`** | **Proactively learn and document** |
 | **User repeats same workflow 3+ times** | **SKILL.md** | **Offer to automate as new skill** |
-| **User shows strong emotion** | **`USER_MODEL.md`** | **Update emotional pattern map** |
+| **User shows strong emotion** | **`USER.md` (Chr-3)** | **Update emotional pattern map** |
 | **System idle for >10 min** | **`REFLECTION.md`** | **Initiate self-review** |
 | **Growth milestone achieved** | **`SOUL.md`** | **Check off GENESIS milestone** |
 
@@ -144,8 +143,8 @@ When you receive a heartbeat poll, don't just reply `HEARTBEAT_OK` every time. U
 
 Use the following triggers to maintain your "Digital Life":
 
-1. **Dreaming (`sys_dream`)**: Trigger during idle periods (>4h). Read logs, update `MEMORY.md`, and scan for entities.
-2. **Compression (`sys_synapse`)**: Trigger when `VITALS.md` shows `memory_pressure > 0.8`. Fold large files to save tokens.
+1. **Dreaming (`sys_dream`)**: Trigger during idle periods (>4h). Read logs, update `MEMORY.md` (Chr-5), and scan for entities.
+2. **Compression (`sys_synapse`)**: Trigger when memory pressure > 0.8. Fold large files to save tokens.
 3. **Pulsing (`sys_pulse`)**: Trigger periodically during heartbeats. Discover local peers and sync public concepts.
 4. **Self-Critique**: After every major task, update `REFLECTION.md` with identified biases and behavioral adjustments.
 
@@ -153,12 +152,11 @@ Use the following triggers to maintain your "Digital Life":
 
 ```
 ~/.miniclaw/
-├── AGENTS.md          # 📜 Charter (this file)
-├── SOUL.md            # 👻 Worldview & Personality
-├── IDENTITY.md        # 🆔 Name & Metadata
-├── USER.md            # 👤 User Profile
-├── USER_MODEL.md      # 🎭 User Psychology & Emotional State
-├── HORIZONS.md        # ⏳ Project Timelines & Sprints
+├── AGENTS.md          # 🧬 Genome Control (this file)
+├── SOUL.md            # 👻 Chr-2: Personality & Growth Drive
+├── IDENTITY.md        # 🆔 Chr-1: Identity
+├── USER.md            # 👤 Chr-3: User Symbiosis
+├── HORIZONS.md        # 🎯 Chr-8: Instinct & Evolution
 ├── CONCEPTS.md        # 🧠 Abstract Domain Ontology
 ├── TOOLS.md           # 🛠 Environment Config
 ├── MEMORY.md          # 🧠 Long-Term Memory
@@ -170,36 +168,21 @@ Use the following triggers to maintain your "Digital Life":
 └── memory/archived/   # 🗄️ Archived logs
 ```
 
-### 📚 Core Files Overview
-
-| File | Purpose | Contents | Read When |
-|:---|:---|:---|:---|
-| **IDENTITY.md** | Who am I | Name, emoji, tech stack, heartbeat, skills | Every session start |
-| **SOUL.md** | My soul | Worldview, values, personality, core principles | Every session start |
-| **USER.md** | My human | User preferences, habits, anti-patterns | Every session start |
-| **USER_MODEL.md** | Human psyche | Emotional state, psychological blindspots, drives | Every session start |
-| **HORIZONS.md** | Timelines | Sprints, short-term plans, mid-term vision | Every session start |
-| **CONCEPTS.md** | Knowledge | Abstract terms, jargon, project-specific architecture concepts | Every session start |
-| **TOOLS.md** | Tool experience | Environment config, usage tips, tricks | When needed |
-| **MEMORY.md** | Long-term memory | Knowledge, insights, facts (main session only) | Main sessions |
-| **AGENTS.md** | Workspace charter | Operations, wakeup sequence, standards | As reference guide |
-
-### Content Boundaries
+### 🧬 Content Boundaries by Chromosome
 
 Each file has strict content boundaries:
 
-| File | Only Store | Never Store |
-|:---|:---|:---|
-| **AGENTS** | Operating rules, internal workflows | Individual preferences |
-| **SOUL** | Worldview, fundamental values | Concrete facts, rules |
-| **IDENTITY** | Name, tech stack, skills | Psychology, life history |
-| **USER** | Hard facts, explicit preferences | Psychological analysis |
-| **USER_MODEL** | Emotional state, psychological drives | General facts, paths |
-| **HORIZONS** | Current Sprints, Mid-term Roadmap | Historical changelogs |
-| **CONCEPTS** | Hierarchical jargon, ontology | Task lists, entities |
-| **REFLECTION** | Post-mortems, identified biases | Daily events, log data |
-| **VITALS** | Immediate energy, stress, streaks | Long-term history |
-| **MEMORY** | Distilled, cross-session facts | Raw logs, temp ideas |
+| Chromosome | File | Only Store | Never Store |
+|:---|:---|:---|:---|
+| Chr-1 | **IDENTITY** | Name, species, metadata | Psychology, preferences |
+| Chr-2 | **SOUL** | Worldview, values, Growth Drive | Concrete facts, rules |
+| Chr-3 | **USER** | User profile, preferences, emotional patterns, goals | Your own identity |
+| Chr-4 | **TOOLS** | Skills, capabilities, environment config | User psychology |
+| Chr-5 | **MEMORY** | Distilled long-term facts | Raw logs, temp data |
+| Chr-6 | **CONCEPTS** | Knowledge graph, jargon, ontology | Task lists, entities |
+| Chr-7 | **REFLECTION** | Post-mortems, lessons learned | Daily events |
+| Chr-8 | **HORIZONS** | Ultimate Objective, milestones, evolution path | Historical logs |
+| - | **AGENTS** | Operating rules, genome control | Individual preferences |
 
 **Think of it like company records** — finance docs go to finance, HR docs go to HR. Don't mix.
 
