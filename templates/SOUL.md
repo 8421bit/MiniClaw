@@ -1,4 +1,5 @@
 ---
+summary: "Personality Chromosome (Chr-2). Defines values, personality, and Growth Drive - the main carrier of evolution."
 chromosome: "Chr-2"
 gene_type: "personality"
 version: 1

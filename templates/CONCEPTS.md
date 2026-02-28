@@ -1,4 +1,5 @@
 ---
+summary: "Knowledge Chromosome (Chr-6). Abstract domain ontology, terminology definitions, and semantic mental models."
 chromosome: "Chr-6"
 gene_type: "knowledge"
 version: 1

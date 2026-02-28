@@ -1,4 +1,5 @@
 ---
+summary: "Symbiosis Chromosome (Chr-3). Theory of Mind about the human partner - their goals, patterns, and preferences."
 chromosome: "Chr-3"
 gene_type: "symbiosis"
 version: 1

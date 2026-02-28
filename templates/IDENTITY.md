@@ -1,4 +1,5 @@
 ---
+summary: "Identity Chromosome (Chr-1). Defines name, species, and core identity of this digital lifeform."
 chromosome: "Chr-1"
 gene_type: "identity"
 version: 1

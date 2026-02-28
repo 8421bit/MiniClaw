@@ -1,4 +1,5 @@
 ---
+summary: "Reflection Chromosome (Chr-7). Self-observation journal, cognitive bias mirror, and lessons learned."
 chromosome: "Chr-7"
 gene_type: "reflection"
 version: 1

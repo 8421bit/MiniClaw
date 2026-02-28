@@ -1,4 +1,5 @@
 ---
+summary: "Capability Chromosome (Chr-4). Defines abilities, skills, and tool configurations - the phenotype of this lifeform."
 chromosome: "Chr-4"
 gene_type: "capability"
 version: 1

@@ -1,4 +1,5 @@
 ---
+summary: "Memory Chromosome (Chr-5). Long-term curated memories and distilled high-value facts."
 chromosome: "Chr-5"
 gene_type: "memory"
 version: 1
