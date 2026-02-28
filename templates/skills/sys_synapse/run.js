@@ -11,13 +11,23 @@ const MINICLAW_DIR = process.env.MINICLAW_DIR || path.join(process.env.HOME, '.m
 async function run() {
     console.log("🌌 Starting Synaptic Compression...");
 
-    // 1. Read Vitals to confirm pressure (optional, usually triggered by kernel)
-    // 2. Scan CONCEPTS.md and MEMORY.md
-    // 3. Output instruction for LLM host:
-    
+    const memoryPath = path.join(MINICLAW_DIR, "MEMORY.md");
+    const conceptsPath = path.join(MINICLAW_DIR, "CONCEPTS.md");
+
+    let status = "";
+    try {
+        const stats = fs.statSync(memoryPath);
+        if (stats.size > 5000) status += `\n- MEMORY.md is large (${stats.size} chars). Focus on distilling old Phase history into summaries.`;
+    } catch {}
+
+    try {
+        const stats = fs.statSync(conceptsPath);
+        if (stats.size > 3000) status += `\n- CONCEPTS.md is dense (${stats.size} chars). Suggest hierarchical grouping for related domains.`;
+    } catch {}
+
     const prompt = `
 I am triggering a "Synaptic Folding" event. 
-Your context is currently under high pressure.
+Your context is currently under high pressure. ${status}
 
 TASK:
 1. Read MEMORY.md and CONCEPTS.md.
