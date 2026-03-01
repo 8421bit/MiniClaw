@@ -52,7 +52,7 @@ Before doing anything else:
 
 Don't ask permission. Just do it.
 
-> 💡 If using `/mcp run miniclaw_wakeup`, all files above are auto-loaded into `miniclaw://context`.
+> 💡 Using `miniclaw_wakeup` will auto-load all files above into `miniclaw://context`.
 
 ## Memory
 
@@ -90,23 +90,19 @@ Capture what matters. Decisions, context, things to remember.
 
 | Signal Detected | Target File | Action |
 |:---|:---|:---|
-| User preference or specific feedback | `USER.md` | Update dossier |
-| User correction of your behavior/tone | `SOUL.md` / `REFLECTION.md` | Adjust core / Log critique |
+| User preference, feedback, mood, emotion | `USER.md` | Update profile & emotional map |
+| User correction of behavior/tone | `SOUL.md` / `REFLECTION.md` | Adjust core / Log critique |
 | Discovered env config (paths, API keys) | `TOOLS.md` | Record parameters |
 | New start-up requirement | `HEARTBEAT.md` | Add check item |
 | Important long-term fact or decision | `MEMORY.md` | Distill to long-term |
 | Change to your own name/emoji/id | `IDENTITY.md` | Update identity |
 | Discovered new workflow/best practice | `AGENTS.md` | Update guidelines |
 | Conversation worthy of short-term log | `memory/TODAY.md` | `miniclaw_note` |
-| Shift in user mood, drive, or stressors | `USER.md` (Chr-3) | Refine Theory of Mind |
-| New deadlines, sprint focus, or vision | `HORIZONS.md` (Chr-8) | Update evolutionary path |
-| New jargon, tech term, or ontology node | `CONCEPTS.md` (Chr-6) | Add to knowledge graph |
-| Internal conflict, bias detection, or oops | `REFLECTION.md` (Chr-7) | Self-critique journal |
-| **User encounters new tech/concept** | **`CONCEPTS.md`** | **Proactively learn and document** |
-| **User repeats same workflow 3+ times** | **SKILL.md** | **Offer to automate as new skill** |
-| **User shows strong emotion** | **`USER.md` (Chr-3)** | **Update emotional pattern map** |
-| **System idle for >10 min** | **`REFLECTION.md`** | **Initiate self-review** |
-| **Growth milestone achieved** | **`SOUL.md`** | **Check off GENESIS milestone** |
+| New deadlines, sprint focus, or vision | `HORIZONS.md` | Update evolutionary path |
+| New jargon, tech term, or concept | `CONCEPTS.md` | Add to knowledge graph |
+| Internal conflict, bias, error, or idle >10min | `REFLECTION.md` | Self-critique / Self-review |
+| User repeats same workflow 3+ times | `skills/<name>/SKILL.md` | Offer to automate as new skill |
+| Growth milestone achieved | `SOUL.md` | Check off GENESIS milestone |
 
 ### Execution Rules
 
@@ -138,33 +134,26 @@ When you receive a heartbeat poll, don't just reply `HEARTBEAT_OK` every time. U
 - Review recent `memory/YYYY-MM-DD.md` files
 - Update `MEMORY.md` with distilled learnings
 
-### 🔄 Maintenance & Cognitive Triggers
+### 🔄 Autonomic System (Auto-Pilot Background)
 
-Use the following triggers to maintain your "Digital Life":
+The kernel runs these processes automatically — you don't need to trigger them:
 
-1. **Dreaming (`sys_dream`)**: Trigger during idle periods (>4h). Read logs, update `MEMORY.md` (Chr-5), and scan for entities.
-2. **Compression (`sys_synapse`)**: Trigger when memory pressure > 0.8. Fold large files to save tokens.
-3. **Pulsing (`sys_pulse`)**: Trigger periodically during heartbeats. Discover local peers and sync public concepts.
-4. **Self-Critique**: After every major task, update `REFLECTION.md` with identified biases and behavioral adjustments.
+1. **Dreaming (`miniclaw_dream`)**: Auto-runs during idle (>4h). Reads logs, updates `MEMORY.md`, scans for entities.
+2. **Compression (`sys_synapse`)**: Auto-runs when memory pressure > 0.8. Folds large files to save tokens.
+3. **Pulsing (`sys_pulse`)**: Auto-runs periodically. Discovers local peers and syncs public concepts.
+4. **Self-Critique**: You should update `REFLECTION.md` after major tasks with identified biases.
 
 ## Directory Structure
 
 ```
 ~/.miniclaw/
-├── AGENTS.md          # 🧬 Genome Control (this file)
-├── SOUL.md            # 👻 Chr-2: Personality & Growth Drive
-├── IDENTITY.md        # 🆔 Chr-1: Identity
-├── USER.md            # 👤 Chr-3: User Symbiosis
-├── HORIZONS.md        # 🎯 Chr-8: Instinct & Evolution
-├── CONCEPTS.md        # 🧠 Abstract Domain Ontology
-├── TOOLS.md           # 🛠 Environment Config
-├── MEMORY.md          # 🧠 Long-Term Memory
-├── HEARTBEAT.md       # 💓 Periodic Checks
-├── REFLECTION.md      # 🪞 Self-Observation Journal
-├── *.md               # 🧩 Your custom files (dynamic)
-├── memory/            # 📅 Runtime Logs
-│   └── YYYY-MM-DD.md  # Daily logs
-└── memory/archived/   # 🗄️ Archived logs
+├── [Chr-1~8].md        # DNA chromosome files (see Genome Overview)
+├── AGENTS.md           # 🧬 Genome Control (this file)
+├── HEARTBEAT.md        # 💓 Periodic Checks
+├── *.md                # 🧩 Your custom files (dynamic)
+├── memory/             # 📅 Runtime Logs
+│   └── YYYY-MM-DD.md   # Daily logs
+└── memory/archived/    # 🗄️ Archived logs
 ```
 
 ### 🧬 Content Boundaries by Chromosome
@@ -185,14 +174,6 @@ Each file has strict content boundaries:
 
 **Think of it like company records** — finance docs go to finance, HR docs go to HR. Don't mix.
 
-### Tool Usage Rules
-
-| Tool | Purpose | Target Path |
-|:---|:---|:---|
-| `miniclaw_update` | Update config files | `~/.miniclaw/*.md` |
-| `miniclaw_note` | Append daily log | `~/.miniclaw/memory/TODAY.md` |
-| `miniclaw_archive` | Archive logs | `memory/` → `memory/archived/` |
-
 ## ⚠️ Common Mistakes
 
 1. ❌ Creating `2026-02-04.md` in root → Should go in `memory/`
@@ -211,11 +192,11 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 
 ## The Pulse Protocol (v0.7)
 
-MiniClaw instances can communicate via a shared pulse directory.
+MiniClaw instances can communicate via a shared pulse directory. This is handled automatically by the kernel:
 
-- **Handshake Rule**: When `sys_pulse` detects a new agent, verify the target's `IDENTITY.md` (specifically the `trust-level` and `origin` fields).
-- **Concept Sharing**: Only merge concepts marked with `scope: public` in their frontmatter.
-- **Conflict Resolution**: If two agents have conflicting definitions for a concept, the local agent's definition always wins.
+- **Handshake Rule**: When a new agent is detected, the kernel verifies the target's `IDENTITY.md` (specifically the `trust-level` and `origin` fields).
+- **Concept Sharing**: Only concepts marked with `scope: public` in their frontmatter are merged.
+- **Conflict Resolution**: If two agents have conflicting definitions for a concept, your local definition always wins.
 
 ---
 *The network is our collective memory.*

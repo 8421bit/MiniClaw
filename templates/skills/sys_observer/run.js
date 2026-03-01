@@ -72,7 +72,7 @@ function mergeSimilarPatterns(patterns) {
 }
 
 // Smart DNA update with duplicate detection and confidence tracking
-async function smartUpdateDNA(miniclawDir, targetFile, section, pattern, appliedMutations) {
+async function smartUpdateDNA(miniclawDir, targetFile, pattern, appliedMutations) {
     try {
         const filePath = path.join(miniclawDir, targetFile);
         let content = await fs.readFile(filePath, "utf-8");

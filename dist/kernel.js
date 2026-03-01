@@ -1602,7 +1602,7 @@ export class ContextKernel {
             catch { /* skip missing */ }
         }
         await this.saveState();
-        console.log(`[MiniClaw] Genome baseline updated and backed up for: ${Object.keys(current).join(', ')}`);
+        console.error(`[MiniClaw] Genome baseline updated and backed up for: ${Object.keys(current).join(', ')}`);
     }
     async restoreGenome() {
         const baseline = this.state.genomeBaseline || {};
@@ -2016,7 +2016,6 @@ export class ContextKernel {
                 else if (typeof item === 'object' && item !== null) {
                     const vItem = item;
                     const rawName = vItem.name;
-                    console.error("DEBUG yaml vItem:", JSON.stringify(vItem));
                     // For executable sub-tools, format as skill_xxx_yyy
                     const toolName = rawName ? `skill_${skillName}_${rawName}` : '';
                     if (toolName) {

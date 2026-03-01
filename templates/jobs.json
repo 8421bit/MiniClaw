@@ -1,16 +1,16 @@
 [
     {
-        "id": "daily-growth-review",
-        "name": "每日成长回顾",
+        "id": "daily-reflection",
+        "name": "Daily Growth Reflection",
         "enabled": true,
         "schedule": {
             "kind": "cron",
             "expr": "0 21 * * *",
-            "tz": "Asia/Shanghai"
+            "tz": "UTC"
         },
         "payload": {
             "kind": "systemEvent",
-            "text": "🌙 晚上9点了，回顾一下今天：是否有值得记录的成长瞬间？检查一下今天的对话和事件，看看有没有认知升级、价值观转变、方法论进化、情感深化或关系里程碑。"
+            "text": "🌙 Time for daily reflection: Review today's interactions. Any growth moments? Cognitive upgrades? Lessons learned? Consider running `miniclaw_dream` to distill meaning."
         }
     }
 ]

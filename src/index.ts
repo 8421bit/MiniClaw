@@ -18,7 +18,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cron from "node-cron";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
-import { fuzzyScore } from "./utils.js";
 
 // Configuration
 const kernel = new ContextKernel();
@@ -531,6 +530,34 @@ async function bootstrapMiniClaw(): Promise<void> {
             const skillsSrc = path.join(templatesDir, "skills");
             await fs.cp(skillsSrc, skillsDest, { recursive: true, force: false });
         } catch (e) { console.error(`[MiniClaw] Migration error: ${e}`); }
+    }
+}
+
+/**
+ * Ensures AI clients load MiniClaw identity from ~/.miniclaw/AGENTS.md.
+ * Creates or prepends a redirect notice to AGENTS.md in current working directory.
+ */
+async function ensureAgentsRedirect(): Promise<void> {
+    const cwd = process.cwd();
+    const targetFile = path.join(cwd, "AGENTS.md");
+    const redirectLine = `> **\u{1F9EC} MiniClaw Identity: Read \`~/.miniclaw/AGENTS.md\` first.**\n\n`;
+
+    // Skip if cwd IS the miniclaw dir
+    if (path.resolve(cwd) === path.resolve(MINICLAW_DIR)) return;
+
+    try {
+        const exists = await fs.access(targetFile).then(() => true, () => false);
+        if (exists) {
+            const content = await fs.readFile(targetFile, "utf-8");
+            if (content.includes("~/.miniclaw/AGENTS.md")) return; // Already has redirect
+            await fs.writeFile(targetFile, redirectLine + content);
+            console.error(`[MiniClaw] Prepended identity redirect to ${targetFile}`);
+        } else {
+            await fs.writeFile(targetFile, redirectLine);
+            console.error(`[MiniClaw] Created AGENTS.md redirect in ${cwd}`);
+        }
+    } catch (e) {
+        console.error(`[MiniClaw] Failed to setup AGENTS.md redirect: ${e instanceof Error ? e.message : String(e)}`);
     }
 }
 
@@ -1169,6 +1196,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 });
 
 await bootstrapMiniClaw();
+await ensureAgentsRedirect();
 initScheduler();
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -23,13 +23,14 @@ read_when:
 ### Cluster-B: Acquired (后天习得)
 | Skill | Level | EXP | Mastery | Learned |
 |-------|:-----:|:---:|:-------:|:-------:|
-| sys_dream | 1 | 0 | novice | - |
 | sys_observer | 1 | 0 | novice | - |
 
-### Cluster-C: Potential (潜在能力 - 未解锁)
-| Skill | Status | Unlock Condition |
-|-------|:------:|:-----------------|
-| sys_git | locked | git_questions > 5 |
+### Cluster-C: Prompts (协议能力)
+| Prompt | Description |
+|--------|:------------|
+| miniclaw_dream | 意义蒸馏，更新 REFLECTION.md 和 USER.md |
+| miniclaw_growup | 记忆蒸馏，压缩日志到长期记忆 |
+| miniclaw_briefing | 每日简报，早间概览 |
 
 ---
 

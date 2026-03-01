@@ -22,8 +22,8 @@
 1.  **Eyes (感知/Workspace Intelligence)**：自动识别当前项目类型、Git 状态和技术栈。
 2.  **Hands (行动/Safe Execution)**：安全地执行终端命令（如 `ls`, `git status`, `npm test`）。
 3.  **Memory (记忆/Entity Graph)**：跨会话记住项目细节和你的个人偏好。
-4.  **Growth Drive (成长欲望)**：**v0.7.0 新增** — 主动寻求学习，检测停滞并请求教导。
-5.  **Active Exploration (主动探索)**：**v0.7.0 新增** — 感知重复模式，提供自动化建议。
+4.  **Growth Drive (成长欲望)**：主动寻求学习，检测停滞并请求教导。
+5.  **Active Exploration (主动探索)**：感知重复模式，提供自动化建议。
 6.  **Bio-Evolution (生物进化)**：根据你的反馈自动进化性格和技能。
 
 > **💡 "它不仅仅是一个插件，它是你的第二大脑。"**
@@ -33,7 +33,7 @@
 ## 🚀 零安装快速开始 (Zero-Install)
 
 你不需要 `git clone`，也不需要手动安装依赖。
-只需将以下配置添加到你的 **Claude Desktop**, **Qoderwork** 或 **OpenClaw** 等 MCP 客户端的配置文件中：
+只需将以下配置添加到你的 **Claude CoWork**, **Qoderwork** 或 **WorkBuddy** 等 MCP 客户端的配置文件中：
 
 ```json
 {
@@ -119,7 +119,7 @@ MiniClaw 会**主动感知**你的行为模式。
 
 ## 🏗️ 架构：微内核 (Micro-Kernel)
 
-MiniClaw 采用 **微内核架构** (~2,400 行代码)，避免了传统 Agent 框架的臃肿。
+MiniClaw 采用 **微内核架构** (~3,700 行 TypeScript)，避免了传统 Agent 框架的臃肿。
 
 | 层级 | 组件 | 职责 |
 |-------|-----------|----------------|
@@ -148,40 +148,47 @@ npm run build
 
 ---
 
-## ⏰ 定时任务 (Cron Scheduler)
+## ⏰ 定时任务 (Scheduled Jobs)
 
-MiniClaw 支持通过 macOS/Linux 的 `crontab` 自动执行定时任务（如每日回顾、定时检查邮件等）。
+MiniClaw 内置了自动任务调度系统，无需配置外部 crontab。
 
 ### 工作原理
 
-1. 系统 cron 每分钟运行调度脚本
-2. 脚本读取 `~/.miniclaw/jobs.json` 中的任务
-3. 匹配当前时间 → 将到期任务注入 `HEARTBEAT.md`
-4. 下次你与 Agent 对话时，Agent 会看到并执行这些指令
+1. **AutonomicSystem** 每分钟自动检查 `~/.miniclaw/jobs.json`
+2. 匹配当前时间的任务会注入到 `HEARTBEAT.md`
+3. 下次与 Agent 对话时，Agent 会看到并执行这些任务
 
-### 配置步骤
+### 添加定时任务
 
-```bash
-# 1. 编辑 crontab
-crontab -e
-
-# 2. 添加以下行（每分钟检查一次）
-* * * * * /usr/local/bin/node /path/to/miniclaw/dist/scheduler.js >> /tmp/miniclaw-scheduler.log 2>&1
-```
-
-> **提示**：将 `/path/to/miniclaw` 替换为你的实际安装路径（如 `~/.npm/_npx/.../node_modules/miniclaw`）。
-
-### 管理定时任务
-
-使用 `miniclaw_jobs` 工具（在对话中直接操作）：
+直接编辑 `~/.miniclaw/jobs.json`，或在对话中请求：
 
 ```text
-"帮我添加一个定时任务：每天早上9点检查邮件"
-→ Agent 调用 miniclaw_jobs(action="add", name="每日邮件检查", cron="0 9 * * *", text="检查邮件...")
-
-"列出所有定时任务"
-→ Agent 调用 miniclaw_jobs(action="list")
+"帮我添加一个定时任务：每天早上9点提醒我检查邮件"
+→ Agent 会更新 jobs.json
 ```
+
+### jobs.json 格式示例
+
+```json
+[
+    {
+        "id": "daily-email-check",
+        "name": "每日邮件检查",
+        "enabled": true,
+        "schedule": {
+            "kind": "cron",
+            "expr": "0 9 * * *",
+            "tz": "Asia/Shanghai"
+        },
+        "payload": {
+            "kind": "systemEvent",
+            "text": "检查邮件，看有没有重要事项"
+        }
+    }
+]
+```
+
+> **注意**：定时任务只在 MiniClaw 运行时生效。
 
 ---
 
