@@ -127,6 +127,137 @@ async function smartUpdateDNA(miniclawDir, targetFile, section, pattern, applied
     }
 }
 
+// Update HEARTBEAT.md with discovered workflow tasks
+async function updateHeartbeatTasks(miniclawDir, pattern, appliedMutations) {
+    try {
+        const heartbeatFile = path.join(miniclawDir, "HEARTBEAT.md");
+        let content = await fs.readFile(heartbeatFile, "utf-8");
+        
+        const taskLine = `\n- [AUTO-EVOLVED] Workflow task: ${pattern.description} (discovered: ${new Date().toISOString().split('T')[0]})`;
+        
+        if (!content.includes(pattern.description.substring(0, 30))) {
+            content += taskLine;
+            await fs.writeFile(heartbeatFile, content, "utf-8");
+            appliedMutations.push({ chromosome: "Chr-Heartbeat", target: "HEARTBEAT.md", change: `Added workflow task: ${pattern.description}` });
+        }
+    } catch (e) {
+        console.error(JSON.stringify({ error: `Failed to update HEARTBEAT.md: ${e.message}` }));
+    }
+}
+
+// Update REFLECTION.md with self-reflection
+async function updateReflection(miniclawDir, reflectionType, description, appliedMutations) {
+    try {
+        const reflectionFile = path.join(miniclawDir, "REFLECTION.md");
+        let content = await fs.readFile(reflectionFile, "utf-8");
+        
+        const reflectionLine = `\n- [AUTO-EVOLVED] ${reflectionType}: ${description} (reflected: ${new Date().toISOString().split('T')[0]})`;
+        
+        // Check for similar reflection
+        const keyConcept = description.substring(0, 40);
+        if (!content.includes(keyConcept)) {
+            content += reflectionLine;
+            await fs.writeFile(reflectionFile, content, "utf-8");
+            appliedMutations.push({ chromosome: "Chr-7", target: "REFLECTION.md", change: `${reflectionType}: ${description}` });
+        }
+    } catch (e) {
+        console.error(JSON.stringify({ error: `Failed to update REFLECTION.md: ${e.message}` }));
+    }
+}
+
+// Extract concepts from patterns and add to CONCEPTS.md
+async function extractConcepts(miniclawDir, pattern, appliedMutations) {
+    try {
+        const conceptsFile = path.join(miniclawDir, "CONCEPTS.md");
+        let content = await fs.readFile(conceptsFile, "utf-8");
+        
+        // Extract potential concept names (capitalized words or quoted terms)
+        const conceptMatches = pattern.description.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)/g) || [];
+        
+        for (const concept of conceptMatches.slice(0, 3)) {
+            if (concept.length > 3 && !content.includes(concept)) {
+                const conceptLine = `\n- **${concept}**: [AUTO-EVOLVED] Frequently mentioned concept detected from user interactions.`;
+                content += conceptLine;
+                appliedMutations.push({ chromosome: "Chr-6", target: "CONCEPTS.md", change: `Added concept: ${concept}` });
+            }
+        }
+        
+        await fs.writeFile(conceptsFile, content, "utf-8");
+    } catch (e) {
+        console.error(JSON.stringify({ error: `Failed to update CONCEPTS.md: ${e.message}` }));
+    }
+}
+
+// Extract concepts from all memory content
+async function extractConceptsFromAllContent(miniclawDir, patterns, appliedMutations) {
+    try {
+        const memoryDir = path.join(miniclawDir, "memory");
+        const files = await fs.readdir(memoryDir).catch(() => []);
+        const mdFiles = files.filter(f => f.endsWith(".md") && !f.includes("archived")).slice(-3);
+        
+        let allContent = "";
+        for (const file of mdFiles) {
+            const content = await fs.readFile(path.join(memoryDir, file), "utf-8");
+            allContent += content + "\n";
+        }
+        
+        // Extract technical terms (camelCase, PascalCase, or technical jargon)
+        const techTerms = [...allContent.matchAll(/\b([A-Z][a-z]+[A-Z][a-zA-Z]+)\b/g)].map(m => m[1]);
+        const uniqueTerms = [...new Set(techTerms)].filter(t => t.length > 4).slice(0, 5);
+        
+        if (uniqueTerms.length > 0) {
+            const conceptsFile = path.join(miniclawDir, "CONCEPTS.md");
+            let content = await fs.readFile(conceptsFile, "utf-8");
+            
+            let added = 0;
+            for (const term of uniqueTerms) {
+                if (!content.includes(term)) {
+                    const conceptLine = `\n- **${term}**: [AUTO-EVOLVED] Technical term detected in recent interactions.`;
+                    content += conceptLine;
+                    added++;
+                }
+            }
+            
+            if (added > 0) {
+                await fs.writeFile(conceptsFile, content, "utf-8");
+                appliedMutations.push({ chromosome: "Chr-6", target: "CONCEPTS.md", change: `Added ${added} technical concepts` });
+            }
+        }
+    } catch (e) {
+        console.error(JSON.stringify({ error: `Failed to extract concepts: ${e.message}` }));
+    }
+}
+
+// Check for milestone achievements and update HORIZONS.md
+async function checkMilestones(miniclawDir, appliedMutations) {
+    try {
+        const stateFile = path.join(miniclawDir, "observer-state.json");
+        let state = { lastEvolution: null, totalEvolutions: 0, milestones: [] };
+        try {
+            state = JSON.parse(await fs.readFile(stateFile, "utf-8"));
+        } catch { /* use default */ }
+        
+        const milestones = [];
+        if (state.totalEvolutions === 1) milestones.push("First DNA Evolution");
+        if (state.totalEvolutions === 5) milestones.push("5th Generation Evolution");
+        if (state.totalEvolutions === 10) milestones.push("10th Generation Evolution - Stable Learning");
+        
+        for (const milestone of milestones) {
+            const horizonsFile = path.join(miniclawDir, "HORIZONS.md");
+            let content = await fs.readFile(horizonsFile, "utf-8");
+            
+            if (!content.includes(milestone)) {
+                const milestoneLine = `\n- [AUTO-EVOLVED] Milestone achieved: ${milestone} (G${state.totalEvolutions}, ${new Date().toISOString().split('T')[0]})`;
+                content += milestoneLine;
+                await fs.writeFile(horizonsFile, content, "utf-8");
+                appliedMutations.push({ chromosome: "Chr-8", target: "HORIZONS.md", change: `Milestone: ${milestone}` });
+            }
+        }
+    } catch (e) {
+        console.error(JSON.stringify({ error: `Failed to check milestones: ${e.message}` }));
+    }
+}
+
 // Calculate similarity between two strings (0-1)
 function calculateSimilarity(str1, str2) {
     const s1 = str1.toLowerCase();
@@ -343,66 +474,66 @@ async function triggerEvolution(miniclawDir) {
         patternsByType[p.type].push(p);
     }
     
-    // Process each pattern type with smart merging
+    // Process each pattern type with smart merging - FULL GENOME EVOLUTION
     for (const [type, typePatterns] of Object.entries(patternsByType)) {
         if (type === "preference") {
-            // Merge similar preferences
+            // Chr-2: SOUL.md - Communication Style & Adaptation
             const mergedPreference = mergeSimilarPatterns(typePatterns);
-            proposals.push({
-                target: "SOUL.md",
-                section: "Communication Style",
-                content: `- ${mergedPreference.description}`,
-                reasoning: "Adapt to user preferences"
-            });
-            // AUTO-APPLY with smart update
-            await smartUpdateDNA(miniclawDir, "SOUL.md", "Communication Style", mergedPreference, appliedMutations);
+            proposals.push({ chromosome: "Chr-2", target: "SOUL.md", section: "Communication Style", content: mergedPreference.description });
+            await smartUpdateDNA(miniclawDir, "SOUL.md", mergedPreference, appliedMutations);
+            
         } else if (type === "temporal") {
-            // Merge temporal patterns
+            // Chr-3: USER.md - Temporal Patterns & Rhythms
             const mergedTemporal = mergeSimilarPatterns(typePatterns);
-            proposals.push({
-                target: "USER.md",
-                section: "Temporal Patterns",
-                content: `- ${mergedTemporal.description}`,
-                reasoning: mergedTemporal.suggestion
-            });
-            await smartUpdateDNA(miniclawDir, "USER.md", "Temporal Patterns", mergedTemporal, appliedMutations);
+            proposals.push({ chromosome: "Chr-3", target: "USER.md", section: "Temporal Patterns", content: mergedTemporal.description });
+            await smartUpdateDNA(miniclawDir, "USER.md", mergedTemporal, appliedMutations);
+            
         } else if (type === "workflow") {
-            // Workflow patterns go to AGENTS.md
-            for (const p of typePatterns.slice(0, 2)) {
-                proposals.push({
-                    target: "AGENTS.md",
-                    section: "Suggested Workflows",
-                    content: `- ${p.description}: ${p.suggestion}`,
-                    reasoning: "Automate repetitive workflows"
-                });
-            }
+            // Chr-?: AGENTS.md - Suggested Workflows
+            const mergedWorkflow = mergeSimilarPatterns(typePatterns);
+            proposals.push({ chromosome: "Chr-Agents", target: "AGENTS.md", section: "Auto-Discovered Workflows", content: mergedWorkflow.description });
+            await smartUpdateDNA(miniclawDir, "AGENTS.md", mergedWorkflow, appliedMutations);
+            
+            // Also update HEARTBEAT.md with workflow tasks
+            await updateHeartbeatTasks(miniclawDir, mergedWorkflow, appliedMutations);
+            
         } else if (type === "sentiment") {
-            // Sentiment affects SOUL.md communication style
+            // Chr-2: SOUL.md - Adaptation Notes & Emotional Intelligence
             const sentimentPattern = typePatterns[0];
-            if (sentimentPattern.description.includes("negative")) {
-                proposals.push({
-                    target: "SOUL.md",
-                    section: "Adaptation Notes",
-                    content: `- [AUTO-EVOLVED] User shows negative feedback trend - adjust approach`,
-                    reasoning: "Adapt to user satisfaction"
-                });
-                await smartUpdateDNA(miniclawDir, "SOUL.md", "Adaptation Notes", {
-                    description: "User shows negative feedback trend - adjust approach",
-                    confidence: sentimentPattern.confidence
-                }, appliedMutations);
-            }
+            const sentimentDesc = sentimentPattern.description.includes("negative") 
+                ? "User shows negative feedback trend - prioritize accuracy over speed"
+                : "User shows positive feedback trend - maintain current approach";
+            proposals.push({ chromosome: "Chr-2", target: "SOUL.md", section: "Emotional Intelligence", content: sentimentDesc });
+            await smartUpdateDNA(miniclawDir, "SOUL.md", { ...sentimentPattern, description: sentimentDesc }, appliedMutations);
+            
+            // Chr-7: REFLECTION.md - Self-reflection on emotional adaptation
+            await updateReflection(miniclawDir, "emotional_adaptation", sentimentDesc, appliedMutations);
+            
         } else if (type === "repetition") {
-            // Repetition patterns suggest new skills
-            for (const p of typePatterns.slice(0, 2)) {
-                proposals.push({
-                    target: "TOOLS.md",
-                    section: "Suggested Skills",
-                    content: `- ${p.description}: ${p.suggestion}`,
-                    reasoning: p.suggestion
-                });
-            }
+            // Chr-4: TOOLS.md - Suggested Skills & Knowledge Gaps
+            const mergedRepetition = mergeSimilarPatterns(typePatterns);
+            proposals.push({ chromosome: "Chr-4", target: "TOOLS.md", section: "Auto-Discovered Needs", content: mergedRepetition.description });
+            await smartUpdateDNA(miniclawDir, "TOOLS.md", mergedRepetition, appliedMutations);
+            
+            // Chr-6: CONCEPTS.md - Extract new concepts from repeated questions
+            await extractConcepts(miniclawDir, mergedRepetition, appliedMutations);
+            
+        } else if (type === "error_pattern") {
+            // Chr-7: REFLECTION.md - Error reflection & improvement
+            const mergedError = mergeSimilarPatterns(typePatterns);
+            proposals.push({ chromosome: "Chr-7", target: "REFLECTION.md", section: "Error Patterns", content: mergedError.description });
+            await updateReflection(miniclawDir, "error_improvement", mergedError.description, appliedMutations);
+            
+            // Chr-4: TOOLS.md - Note tool reliability issues
+            await smartUpdateDNA(miniclawDir, "TOOLS.md", { ...mergedError, description: `Tool reliability issue: ${mergedError.description}` }, appliedMutations);
         }
     }
+    
+    // Always check for concept extraction from all interactions
+    await extractConceptsFromAllContent(miniclawDir, strongPatterns, appliedMutations);
+    
+    // Check for milestone achievements
+    await checkMilestones(miniclawDir, appliedMutations);
 
     // Update state
     state.lastEvolution = new Date().toISOString();
