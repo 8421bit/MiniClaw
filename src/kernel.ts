@@ -1192,6 +1192,23 @@ export class ContextKernel {
             });
         }
 
+        // ★ Epigenetic Methylation (Semi-permanent adaptations)
+        const { getMethylatedTraits } = await import("./evolution.js");
+        const methylatedTraits = await getMethylatedTraits(MINICLAW_DIR);
+        if (methylatedTraits.length > 0) {
+            const methylationContent = methylatedTraits
+                .filter(t => t.stability > 0.5)
+                .map(t => `- **${t.trait}**: ${t.value} (stability: ${Math.round(t.stability * 100)}%)`)
+                .join('\n');
+            if (methylationContent) {
+                sections.push({
+                    name: "METHYLATION",
+                    content: `\n---\n\n## 🧬 Methylated Traits (Learned Adaptations)\n> [!NOTE]\n> These are semi-permanent behavioral adaptations formed through repeated interaction patterns.\n> They modify how SOUL.md is expressed without changing its core sequence.\n\n${methylationContent}\n`,
+                    priority: 8
+                });
+            }
+        }
+
         // ★ Priority 10: ACE Time Mode + Continuation
         let aceContent = `## 🧠 Adaptive Context Engine\n`;
         aceContent += `${tmConfig.emoji} Mode: **${tmConfig.label}** (${hour}:${String(now.getMinutes()).padStart(2, '0')})\n`;

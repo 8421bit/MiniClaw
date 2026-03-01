@@ -16,6 +16,12 @@ const MIN_CONFIDENCE = 0.75;
 const MIN_PATTERNS = 2;
 const COOLDOWN_HOURS = 24;
 
+// === Epigenetic Configuration ===
+// Controls how temporary adaptations become semi-permanent traits
+const METHYLATION_THRESHOLD = 10;      // Minimum pattern repetitions to trigger methylation
+const METHYLATION_AGE_DAYS = 7;        // Minimum age (days) for pattern to be considered stable
+const METHYLATION_COOLDOWN_HOURS = 48; // Cooldown between SOUL.md modifications
+
 // === Types ===
 interface Pattern {
     type: string;
@@ -45,6 +51,17 @@ interface EvolutionResult {
     patterns?: Pattern[];
     appliedMutations?: Mutation[];
     totalEvolutions?: number;
+}
+
+// === Epigenetic State ===
+// Tracks methylation (semi-permanent adaptations) without changing DNA sequence
+interface MethylatedTrait {
+    trait: string;           // What aspect of behavior (e.g., "communication_style")
+    value: string;           // The adapted value (e.g., "technical")
+    source: string;          // Evidence/source of adaptation
+    timestamp: string;       // When methylation occurred
+    patternCount: number;    // How many times pattern was observed
+    stability: number;       // 0-1, how stable this methylation is
 }
 
 // === Helper Functions ===
@@ -98,6 +115,135 @@ async function appendIfNew(filePath: string, line: string, dedupeKey: string): P
         await fs.writeFile(filePath, content + `\n${line}`, "utf-8");
         return true;
     } catch { return false; }
+}
+
+// === Epigenetic Functions ===
+// Methylation: Semi-permanent adaptation without changing DNA sequence
+
+async function loadMethylatedTraits(miniclawDir: string): Promise<MethylatedTrait[]> {
+    const methylationFile = path.join(miniclawDir, "methylation.json");
+    try {
+        const raw = await fs.readFile(methylationFile, "utf-8");
+        return JSON.parse(raw);
+    } catch { return []; }
+}
+
+async function saveMethylatedTraits(miniclawDir: string, traits: MethylatedTrait[]): Promise<void> {
+    const methylationFile = path.join(miniclawDir, "methylation.json");
+    await fs.writeFile(methylationFile, JSON.stringify(traits, null, 2), "utf-8");
+}
+
+async function getLastMethylationTime(miniclawDir: string): Promise<number> {
+    const methylationFile = path.join(miniclawDir, "methylation.json");
+    try {
+        const stats = await fs.stat(methylationFile);
+        return stats.mtime.getTime();
+    } catch { return 0; }
+}
+
+// Check if a pattern should trigger methylation (semi-permanent adaptation)
+async function shouldMethylate(
+    pattern: Pattern,
+    existingTraits: MethylatedTrait[]
+): Promise<{ should: boolean; trait?: string; value?: string }> {
+    // Must be high confidence and repeated
+    if (pattern.confidence < 0.8) return { should: false };
+    if ((pattern.mergedCount || 1) < METHYLATION_THRESHOLD) return { should: false };
+
+    // Extract trait and value from pattern description
+    // Pattern: "Frequent tool usage: miniclaw_update, miniclaw_read" → trait: "tool_preference", value: "frequent_updater"
+    let trait: string | undefined;
+    let value: string | undefined;
+
+    if (pattern.type === "preference" && pattern.description.includes("tool")) {
+        trait = "interaction_style";
+        value = pattern.description.includes("update") ? "proactive_modifier" : "active_reader";
+    } else if (pattern.type === "temporal") {
+        trait = "activity_pattern";
+        value = "time_sensitive";
+    } else if (pattern.type === "workflow") {
+        trait = "workflow_style";
+        value = "structured";
+    }
+
+    if (!trait || !value) return { should: false };
+
+    // Check if already methylated with same or higher stability
+    const existing = existingTraits.find(t => t.trait === trait);
+    if (existing && existing.stability > 0.7) {
+        return { should: false }; // Already stable
+    }
+
+    return { should: true, trait, value };
+}
+
+// Apply methylation: Update SOUL.md with semi-permanent adaptation
+async function methylateTrait(
+    miniclawDir: string,
+    trait: string,
+    value: string,
+    pattern: Pattern,
+    appliedMutations: Mutation[]
+): Promise<void> {
+    // Check cooldown
+    const lastMethylation = await getLastMethylationTime(miniclawDir);
+    const hoursSince = (Date.now() - lastMethylation) / (1000 * 60 * 60);
+    if (hoursSince < METHYLATION_COOLDOWN_HOURS) {
+        console.error(`[MiniClaw] 🧬 Methylation cooldown: ${Math.round(METHYLATION_COOLDOWN_HOURS - hoursSince)}h remaining`);
+        return;
+    }
+
+    // Load existing traits
+    const traits = await loadMethylatedTraits(miniclawDir);
+
+    // Add or update trait
+    const existingIndex = traits.findIndex(t => t.trait === trait);
+    const newTrait: MethylatedTrait = {
+        trait,
+        value,
+        source: pattern.description,
+        timestamp: new Date().toISOString(),
+        patternCount: pattern.mergedCount || 1,
+        stability: Math.min(0.95, 0.5 + (pattern.mergedCount || 1) * 0.05),
+    };
+
+    if (existingIndex >= 0) {
+        traits[existingIndex] = newTrait;
+    } else {
+        traits.push(newTrait);
+    }
+
+    await saveMethylatedTraits(miniclawDir, traits);
+
+    // Update SOUL.md with methylated trait (append to end, don't replace)
+    const soulPath = path.join(miniclawDir, "SOUL.md");
+    try {
+        let soulContent = await fs.readFile(soulPath, "utf-8");
+        const methylationNote = `\n<!-- [METHYLATED] ${trait}: ${value} (stability: ${Math.round(newTrait.stability * 100)}%) -->`;
+
+        // Remove old methylation notes for this trait
+        soulContent = soulContent.replace(new RegExp(`\\n<!-- \\[METHYLATED\\] ${trait}: .*? -->`, 'g'), '');
+
+        // Add new note
+        soulContent += methylationNote;
+        await fs.writeFile(soulPath, soulContent, "utf-8");
+
+        appliedMutations.push({
+            chromosome: "Chr-2 (SOUL)",
+            target: "SOUL.md",
+            change: `Methylated ${trait} → ${value}`,
+            confidence: Math.round(newTrait.stability * 100),
+        });
+
+        console.error(`[MiniClaw] 🧬 Methylation applied: ${trait} → ${value} (${Math.round(newTrait.stability * 100)}% stable)`);
+    } catch (e) {
+        console.error(`[MiniClaw] Methylation write failed: ${e}`);
+    }
+}
+
+// Get current methylated traits for context assembly
+export async function getMethylatedTraits(miniclawDir: string): Promise<MethylatedTrait[]> {
+    return loadMethylatedTraits(miniclawDir);
 }
 
 async function smartUpdateDNA(miniclawDir: string, targetFile: string, pattern: Pattern, appliedMutations: Mutation[]): Promise<void> {
@@ -344,9 +490,18 @@ export async function triggerEvolution(miniclawDir: string): Promise<EvolutionRe
         patternsByType[p.type].push(p);
     }
 
+    // Load existing methylated traits for epigenetic decisions
+    const methylatedTraits = await loadMethylatedTraits(miniclawDir);
+
     for (const [type, typePatterns] of Object.entries(patternsByType)) {
         const merged = mergeSimilarPatterns(typePatterns);
-        
+
+        // ★ Epigenetic Methylation: Check if pattern should become semi-permanent
+        const methylationCheck = await shouldMethylate(merged, methylatedTraits);
+        if (methylationCheck.should && methylationCheck.trait && methylationCheck.value) {
+            await methylateTrait(miniclawDir, methylationCheck.trait, methylationCheck.value, merged, appliedMutations);
+        }
+
         if (type === "preference" || type === "sentiment") {
             await smartUpdateDNA(miniclawDir, "SOUL.md", merged, appliedMutations);
             if (type === "sentiment") await updateReflection(miniclawDir, "emotional_adaptation", merged.description, appliedMutations);
