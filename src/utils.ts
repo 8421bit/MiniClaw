@@ -115,6 +115,26 @@ export async function atomicWrite(filePath: string, data: string): Promise<void>
     await fs.rename(tmp, filePath);
 }
 
+/** Sleep utility for retry delays */
+export function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Safe write with retry logic and exponential backoff */
+export async function safeWrite(filePath: string, data: string, retries = 3): Promise<void> {
+    for (let i = 0; i < retries; i++) {
+        try {
+            await atomicWrite(filePath, data);
+            return;
+        } catch (e) {
+            if (i === retries - 1) throw e;
+            const delay = 100 * Math.pow(2, i); // Exponential backoff: 100ms, 200ms, 400ms
+            console.error(`[MiniClaw] Write retry ${i + 1}/${retries} for ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+            await sleep(delay);
+        }
+    }
+}
+
 export function hashString(s: string): string {
     return crypto.createHash("md5").update(s).digest("hex");
 }

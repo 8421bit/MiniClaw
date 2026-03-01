@@ -335,6 +335,7 @@ class AutonomicSystem {
 class EntityStore {
     entities = [];
     loaded = false;
+    MAX_ENTITIES = 1000; // Prevent unbounded growth
     invalidate() {
         this.loaded = false;
         this.entities = [];
@@ -374,6 +375,20 @@ class EntityStore {
                 existing.sentiment = entity.sentiment;
             await this.save();
             return existing;
+        }
+        // Check entity limit before adding
+        if (this.entities.length >= this.MAX_ENTITIES) {
+            // Remove oldest entity (lowest mentionCount and oldest lastMentioned)
+            const oldest = this.entities
+                .filter(e => e.mentionCount <= 1)
+                .sort((a, b) => new Date(a.lastMentioned).getTime() - new Date(b.lastMentioned).getTime())[0];
+            if (oldest) {
+                const idx = this.entities.findIndex(e => e.name === oldest.name);
+                if (idx !== -1) {
+                    console.error(`[MiniClaw] EntityStore: Removing old entity "${oldest.name}" (limit: ${this.MAX_ENTITIES})`);
+                    this.entities.splice(idx, 1);
+                }
+            }
         }
         const newEntity = {
             ...entity,
