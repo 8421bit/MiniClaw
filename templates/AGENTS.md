@@ -102,7 +102,6 @@ Capture what matters. Decisions, context, things to remember.
 | New deadlines, sprint focus, or vision | `HORIZONS.md` (Chr-8) | Update evolutionary path |
 | New jargon, tech term, or ontology node | `CONCEPTS.md` (Chr-6) | Add to knowledge graph |
 | Internal conflict, bias detection, or oops | `REFLECTION.md` (Chr-7) | Self-critique journal |
-| UI failure/shift detected via screenshot | `VISION_CONTEXT` | Call `sys_perceiver` |
 | **User encounters new tech/concept** | **`CONCEPTS.md`** | **Proactively learn and document** |
 | **User repeats same workflow 3+ times** | **SKILL.md** | **Offer to automate as new skill** |
 | **User shows strong emotion** | **`USER.md` (Chr-3)** | **Update emotional pattern map** |
