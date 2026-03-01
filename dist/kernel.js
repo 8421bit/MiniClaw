@@ -348,7 +348,8 @@ class EntityStore {
             const data = JSON.parse(raw);
             this.entities = Array.isArray(data.entities) ? data.entities : [];
         }
-        catch {
+        catch (e) {
+            // First run or corrupted file, start fresh
             this.entities = [];
         }
         this.loaded = true;
@@ -735,6 +736,37 @@ export class ContextKernel {
         };
         this.stashLoaded = false;
         this.stateLoaded = false;
+    }
+    // Health check for monitoring system status
+    healthCheck() {
+        const issues = [];
+        const metrics = {};
+        // Check autonomic system
+        const autonomicRunning = this.autonomicSystem ? true : false;
+        metrics.autonomicRunning = autonomicRunning ? 1 : 0;
+        if (!autonomicRunning) {
+            issues.push('AutonomicSystem not running');
+        }
+        // Check entity count
+        metrics.entityCount = this.entityStore ? this.entityStore.entities?.length || 0 : 0;
+        if (metrics.entityCount > 900) {
+            issues.push(`Entity count approaching limit: ${metrics.entityCount}/1000`);
+        }
+        // Check boot errors
+        metrics.bootErrors = this.bootErrors.length;
+        if (this.bootErrors.length > 0) {
+            issues.push(`Boot had ${this.bootErrors.length} errors`);
+        }
+        // Check state loaded
+        metrics.stateLoaded = this.stateLoaded ? 1 : 0;
+        if (!this.stateLoaded) {
+            issues.push('State not loaded');
+        }
+        return {
+            status: issues.length === 0 ? 'healthy' : 'degraded',
+            issues,
+            metrics
+        };
     }
     async boot(mode = { type: "full" }) {
         this.bootErrors = [];

@@ -80,13 +80,18 @@ async function broadcastPulse(event: string) {
             });
             client.on('error', () => fs.unlink(p).catch(() => { }));
         }
-    } catch { }
+    } catch (e) {
+        console.error(`[MiniClaw] Hive-Mind cleanup warning: ${e instanceof Error ? e.message : String(e)}`);
+    }
 }
 
 // Ensure miniclaw dir exists
 async function ensureDir() {
     try { await fs.access(MINICLAW_DIR); }
-    catch { await fs.mkdir(MINICLAW_DIR, { recursive: true }); }
+    catch { 
+        try { await fs.mkdir(MINICLAW_DIR, { recursive: true }); }
+        catch (e) { console.error(`[MiniClaw] Failed to create directory: ${e instanceof Error ? e.message : String(e)}`); }
+    }
 }
 
 // Check if initialized
@@ -115,7 +120,8 @@ async function executeHeartbeat(): Promise<void> {
             } else {
                 await kernel.updateHeartbeatState({ dailyLogBytes: stats.size });
             }
-        } catch {
+        } catch (e) {
+            // No daily log file yet, reset bytes
             await kernel.updateHeartbeatState({ dailyLogBytes: 0 });
         }
 

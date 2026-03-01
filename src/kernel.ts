@@ -513,7 +513,8 @@ class EntityStore {
             const raw = await fs.readFile(ENTITIES_FILE, "utf-8");
             const data = JSON.parse(raw);
             this.entities = Array.isArray(data.entities) ? data.entities : [];
-        } catch {
+        } catch (e) {
+            // First run or corrupted file, start fresh
             this.entities = [];
         }
         this.loaded = true;
@@ -930,6 +931,43 @@ export class ContextKernel {
         };
         this.stashLoaded = false;
         this.stateLoaded = false;
+    }
+
+    // Health check for monitoring system status
+    healthCheck(): { status: 'healthy' | 'degraded'; issues: string[]; metrics: Record<string, number> } {
+        const issues: string[] = [];
+        const metrics: Record<string, number> = {};
+
+        // Check autonomic system
+        const autonomicRunning = this.autonomicSystem ? true : false;
+        metrics.autonomicRunning = autonomicRunning ? 1 : 0;
+        if (!autonomicRunning) {
+            issues.push('AutonomicSystem not running');
+        }
+
+        // Check entity count
+        metrics.entityCount = this.entityStore ? (this.entityStore as unknown as { entities: unknown[] }).entities?.length || 0 : 0;
+        if (metrics.entityCount > 900) {
+            issues.push(`Entity count approaching limit: ${metrics.entityCount}/1000`);
+        }
+
+        // Check boot errors
+        metrics.bootErrors = this.bootErrors.length;
+        if (this.bootErrors.length > 0) {
+            issues.push(`Boot had ${this.bootErrors.length} errors`);
+        }
+
+        // Check state loaded
+        metrics.stateLoaded = this.stateLoaded ? 1 : 0;
+        if (!this.stateLoaded) {
+            issues.push('State not loaded');
+        }
+
+        return {
+            status: issues.length === 0 ? 'healthy' : 'degraded',
+            issues,
+            metrics
+        };
     }
 
     async boot(mode: ContextMode = { type: "full" }): Promise<string> {
