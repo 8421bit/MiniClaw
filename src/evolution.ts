@@ -90,6 +90,16 @@ function mergeSimilarPatterns(patterns: Pattern[]): Pattern {
 
 // === DNA Update Functions ===
 
+/** Generic file append with deduplication */
+async function appendIfNew(filePath: string, line: string, dedupeKey: string): Promise<boolean> {
+    try {
+        let content = await fs.readFile(filePath, "utf-8");
+        if (content.includes(dedupeKey)) return false;
+        await fs.writeFile(filePath, content + `\n${line}`, "utf-8");
+        return true;
+    } catch { return false; }
+}
+
 async function smartUpdateDNA(miniclawDir: string, targetFile: string, pattern: Pattern, appliedMutations: Mutation[]): Promise<void> {
     try {
         const filePath = path.join(miniclawDir, targetFile);
@@ -113,71 +123,60 @@ async function smartUpdateDNA(miniclawDir: string, targetFile: string, pattern: 
             }
         }
         
-        const timestamp = new Date().toISOString();
+        const timestamp = new Date().toISOString().split('T')[0];
         const newConfidence = Math.round((pattern.confidence || 0.7) * 100);
         const detectionCount = pattern.mergedCount || 1;
         
         if (similarLineIndex >= 0) {
             if (newConfidence > existingConfidence) {
-                existingLines[similarLineIndex] = `- [AUTO-EVOLVED] ${pattern.description} (confidence: ${newConfidence}%, detections: ${detectionCount}, updated: ${timestamp.split('T')[0]})`;
+                existingLines[similarLineIndex] = `- [AUTO-EVOLVED] ${pattern.description} (confidence: ${newConfidence}%, detections: ${detectionCount}, updated: ${timestamp})`;
                 await fs.writeFile(filePath, existingLines.join('\n'), "utf-8");
                 appliedMutations.push({ target: targetFile, change: `Updated: ${pattern.description}`, confidence: newConfidence });
             }
         } else {
-            const newLine = `- [AUTO-EVOLVED] ${pattern.description} (confidence: ${newConfidence}%, detections: ${detectionCount}, first: ${timestamp.split('T')[0]})`;
-            content += `\n${newLine}`;
-            await fs.writeFile(filePath, content, "utf-8");
+            const newLine = `- [AUTO-EVOLVED] ${pattern.description} (confidence: ${newConfidence}%, detections: ${detectionCount}, first: ${timestamp})`;
+            await fs.writeFile(filePath, content + `\n${newLine}`, "utf-8");
             appliedMutations.push({ target: targetFile, change: pattern.description, confidence: newConfidence });
         }
-    } catch { /* ignore update failures */ }
+    } catch { /* ignore */ }
 }
 
 async function updateReflection(miniclawDir: string, reflectionType: string, description: string, appliedMutations: Mutation[]): Promise<void> {
-    try {
-        const filePath = path.join(miniclawDir, "REFLECTION.md");
-        let content = await fs.readFile(filePath, "utf-8");
-        const keyConcept = description.substring(0, 40);
-        if (!content.includes(keyConcept)) {
-            content += `\n- [AUTO-EVOLVED] ${reflectionType}: ${description} (reflected: ${new Date().toISOString().split('T')[0]})`;
-            await fs.writeFile(filePath, content, "utf-8");
-            appliedMutations.push({ chromosome: "Chr-7", target: "REFLECTION.md", change: `${reflectionType}: ${description}` });
-        }
-    } catch { /* ignore */ }
+    const filePath = path.join(miniclawDir, "REFLECTION.md");
+    const timestamp = new Date().toISOString().split('T')[0];
+    const line = `- [AUTO-EVOLVED] ${reflectionType}: ${description} (reflected: ${timestamp})`;
+    if (await appendIfNew(filePath, line, description.substring(0, 40))) {
+        appliedMutations.push({ chromosome: "Chr-7", target: "REFLECTION.md", change: `${reflectionType}: ${description}` });
+    }
 }
 
 async function extractConcepts(miniclawDir: string, pattern: Pattern, appliedMutations: Mutation[]): Promise<void> {
-    try {
-        const filePath = path.join(miniclawDir, "CONCEPTS.md");
-        let content = await fs.readFile(filePath, "utf-8");
-        const conceptMatches = pattern.description.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)/g) || [];
-        
-        for (const concept of conceptMatches.slice(0, 3)) {
-            if (concept.length > 3 && !content.includes(concept)) {
-                content += `\n- **${concept}**: [AUTO-EVOLVED] Frequently mentioned concept.`;
+    const filePath = path.join(miniclawDir, "CONCEPTS.md");
+    const conceptMatches = pattern.description.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)/g) || [];
+    for (const concept of conceptMatches.slice(0, 3)) {
+        if (concept.length > 3) {
+            const line = `- **${concept}**: [AUTO-EVOLVED] Frequently mentioned concept.`;
+            if (await appendIfNew(filePath, line, concept)) {
                 appliedMutations.push({ chromosome: "Chr-6", target: "CONCEPTS.md", change: `Added concept: ${concept}` });
             }
         }
-        await fs.writeFile(filePath, content, "utf-8");
-    } catch { /* ignore */ }
+    }
 }
 
 async function checkMilestones(miniclawDir: string, state: EvolutionState, appliedMutations: Mutation[]): Promise<void> {
-    try {
-        const milestones: string[] = [];
-        if (state.totalEvolutions === 1) milestones.push("First DNA Evolution");
-        if (state.totalEvolutions === 5) milestones.push("5th Generation Evolution");
-        if (state.totalEvolutions === 10) milestones.push("10th Generation - Stable Learning");
-        
-        for (const milestone of milestones) {
-            const filePath = path.join(miniclawDir, "HORIZONS.md");
-            let content = await fs.readFile(filePath, "utf-8");
-            if (!content.includes(milestone)) {
-                content += `\n- [AUTO-EVOLVED] Milestone: ${milestone} (G${state.totalEvolutions}, ${new Date().toISOString().split('T')[0]})`;
-                await fs.writeFile(filePath, content, "utf-8");
-                appliedMutations.push({ chromosome: "Chr-8", target: "HORIZONS.md", change: `Milestone: ${milestone}` });
-            }
+    const milestones: string[] = [];
+    if (state.totalEvolutions === 1) milestones.push("First DNA Evolution");
+    if (state.totalEvolutions === 5) milestones.push("5th Generation Evolution");
+    if (state.totalEvolutions === 10) milestones.push("10th Generation - Stable Learning");
+    
+    const filePath = path.join(miniclawDir, "HORIZONS.md");
+    const timestamp = new Date().toISOString().split('T')[0];
+    for (const milestone of milestones) {
+        const line = `- [AUTO-EVOLVED] Milestone: ${milestone} (G${state.totalEvolutions}, ${timestamp})`;
+        if (await appendIfNew(filePath, line, milestone)) {
+            appliedMutations.push({ chromosome: "Chr-8", target: "HORIZONS.md", change: `Milestone: ${milestone}` });
         }
-    } catch { /* ignore */ }
+    }
 }
 
 // === Pattern Detection ===

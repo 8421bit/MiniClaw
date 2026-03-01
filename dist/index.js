@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cron from "node-cron";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
+import { textResult, errorResult } from "./utils.js";
 // Configuration
 const kernel = new ContextKernel();
 // Start autonomic nervous system (pulse + dream)
@@ -567,7 +568,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const energyEstimate = Math.ceil(inputSize / 4) + 100; // Base cost 100 + input context
     await kernel.trackTool(name, energyEstimate);
     if (name === "miniclaw_read") {
-        return { content: [{ type: "text", text: await getContextContent("full") }] };
+        return textResult(await getContextContent("full"));
     }
     if (name === "miniclaw_update") {
         const parsed = z.object({
@@ -595,14 +596,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const stat = await fs.stat(path.join(MINICLAW_DIR, f.name));
                 lines.push(`${isCore} **${f.name}** \u2014 ${stat.size}B | boot-priority: ${priority}`);
             }
-            return { content: [{ type: "text", text: lines.length > 0 ? `\ud83d\udcc2 Files in ~/.miniclaw/:\n\n${lines.join('\n')}` : '\ud83d\udcc2 No files found.' }] };
+            return textResult(lines.length > 0 ? `\ud83d\udcc2 Files in ~/.miniclaw/:\n\n${lines.join('\n')}` : '\ud83d\udcc2 No files found.');
         }
         // --- DELETE: remove non-core files ---
         if (action === "delete") {
             if (!parsed.filename)
                 throw new Error("filename is required for delete.");
             if (protectedFiles.has(parsed.filename)) {
-                return { content: [{ type: "text", text: `\u274c Cannot delete core file: ${parsed.filename}` }] };
+                return errorResult(`Cannot delete core file: ${parsed.filename}`);
             }
             const p = path.join(MINICLAW_DIR, parsed.filename);
             try {
@@ -614,10 +615,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 catch (e) {
                     console.error(`[MiniClaw] onFileChanged hook error: ${e}`);
                 }
-                return { content: [{ type: "text", text: `\ud83d\uddd1\ufe0f Deleted ${parsed.filename}` }] };
+                return textResult(`\ud83d\uddd1\ufe0f Deleted ${parsed.filename}`);
             }
             catch {
-                return { content: [{ type: "text", text: `\u274c File not found: ${parsed.filename}` }] };
+                return errorResult(`File not found: ${parsed.filename}`);
             }
         }
         // --- WRITE: create or update file ---
@@ -673,7 +674,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         catch (e) {
             console.error(`[MiniClaw] Track file change error: ${e}`);
         }
-        return { content: [{ type: "text", text: isNewFile ? `✨ Created new file: ${filename}` : `Updated ${filename}.` }] };
+        return textResult(isNewFile ? `✨ Created new file: ${filename}` : `Updated ${filename}.`);
     }
     if (name === "miniclaw_introspect") {
         const scope = args?.scope || "summary";
@@ -681,7 +682,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (scope === "tools") {
             const sorted = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
             const lines = sorted.map(([tool, count]) => `- ${tool}: ${count}x`);
-            return { content: [{ type: "text", text: `\ud83d\udd27 Tool Usage:\n\n${lines.join('\n') || '(no data yet)'}` }] };
+            return textResult(`\ud83d\udd27 Tool Usage:\n\n${lines.join('\n') || '(no data yet)'}`);
         }
         if (scope === "files") {
             const fc = analytics.fileChanges || {};
@@ -697,7 +698,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
             }
             catch { /* skip */ }
-            return { content: [{ type: "text", text: `\ud83d\udcc1 File Changes:\n\n${lines.join('\n') || '(no data yet)'}` }] };
+            return textResult(`\ud83d\udcc1 File Changes:\n\n${lines.join('\n') || '(no data yet)'}`);
         }
         if (scope === "genesis") {
             try {
@@ -708,10 +709,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     const e = JSON.parse(l);
                     return `[${e.ts.split('T')[0]}] ${e.event}: ${e.target} ${e.type ? `(${e.type})` : ''}`;
                 });
-                return { content: [{ type: "text", text: `## 🧬 Genesis Log (Last 50 changes)\n\n${formatted.join('\n')}` }] };
+                return textResult(`## 🧬 Genesis Log (Last 50 changes)\n\n${formatted.join('\n')}`);
             }
             catch {
-                return { content: [{ type: "text", text: "## 🧬 Genesis Log\n\n(No evolution events logged yet)" }] };
+                return textResult("## 🧬 Genesis Log\n\n(No evolution events logged yet)");
             }
         }
         // Default: summary
@@ -742,7 +743,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `\ud83d\udcdd Distillations: ${analytics.dailyDistillations}`,
             `\ud83d\udccd Last Activity: ${analytics.lastActivity || 'unknown'}`,
         ];
-        return { content: [{ type: "text", text: report.join('\n') }] };
+        return textResult(report.join('\n'));
     }
     if (name === "miniclaw_note") {
         const { text } = z.object({ text: z.string() }).parse(args);
@@ -751,7 +752,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const p = path.join(MINICLAW_DIR, "memory", `${today}.md`);
         await fs.mkdir(path.dirname(p), { recursive: true });
         await fs.appendFile(p, `\n- [${new Date().toLocaleTimeString()}] ${text}\n`, "utf-8");
-        return { content: [{ type: "text", text: `Logged to memory/${today}.md` }] };
+        return textResult(`Logged to memory/${today}.md`);
     }
     if (name === "miniclaw_archive") {
         await ensureDir();
@@ -762,10 +763,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await fs.mkdir(archiveDir, { recursive: true });
         try {
             await fs.rename(src, dest);
-            return { content: [{ type: "text", text: `Archived today's log.` }] };
+            return textResult(`Archived today's log.`);
         }
         catch {
-            return { content: [{ type: "text", text: `No log found to archive.` }] };
+            return textResult(`No log found to archive.`);
         }
     }
     // ★ Entity Memory Tool
@@ -781,7 +782,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }).parse(args);
         if (action === "add") {
             if (!entityName || !entityType) {
-                return { content: [{ type: "text", text: "Error: 'name' and 'type' required for add." }] };
+                return errorResult("'name' and 'type' required for add.");
             }
             const entity = await kernel.entityStore.add({
                 name: entityName,
@@ -797,26 +798,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             catch (e) {
                 console.error(`[MiniClaw] onNewEntity hook error: ${e}`);
             }
-            return { content: [{ type: "text", text: `Entity "${entity.name}" (${entity.type}) — ${entity.mentionCount} mentions. Relations: ${entity.relations.join(', ') || 'none'}` }] };
+            return textResult(`Entity "${entity.name}" (${entity.type}) — ${entity.mentionCount} mentions. Relations: ${entity.relations.join(', ') || 'none'}`);
         }
         if (action === "remove") {
             if (!entityName)
-                return { content: [{ type: "text", text: "Error: 'name' required." }] };
+                return errorResult("'name' required.");
             const removed = await kernel.entityStore.remove(entityName);
-            return { content: [{ type: "text", text: removed ? `Removed "${entityName}".` : `Entity "${entityName}" not found.` }] };
+            return textResult(removed ? `Removed "${entityName}".` : `Entity "${entityName}" not found.`);
         }
         if (action === "link") {
             if (!entityName || !relation)
-                return { content: [{ type: "text", text: "Error: 'name' and 'relation' required." }] };
+                return errorResult("'name' and 'relation' required.");
             const linked = await kernel.entityStore.link(entityName, relation);
-            return { content: [{ type: "text", text: linked ? `Linked "${entityName}" → "${relation}".` : `Entity "${entityName}" not found.` }] };
+            return textResult(linked ? `Linked "${entityName}" → "${relation}".` : `Entity "${entityName}" not found.`);
         }
         if (action === "query") {
             if (!entityName)
-                return { content: [{ type: "text", text: "Error: 'name' required." }] };
+                return errorResult("'name' required.");
             const entity = await kernel.entityStore.query(entityName);
             if (!entity)
-                return { content: [{ type: "text", text: `Entity "${entityName}" not found.` }] };
+                return textResult(`Entity "${entityName}" not found.`);
             const attrs = Object.entries(entity.attributes).map(([k, v]) => `${k}: ${v}`).join(', ');
             const report = [
                 `**${entity.name}** (${entity.type})`,
@@ -825,21 +826,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 attrs ? `Attributes: ${attrs}` : '',
                 entity.relations.length > 0 ? `Relations: ${entity.relations.join('; ')}` : '',
             ].filter(Boolean).join('\n');
-            return { content: [{ type: "text", text: report }] };
+            return textResult(report);
         }
         if (action === "list") {
             const entities = await kernel.entityStore.list(filterType);
             if (entities.length === 0)
-                return { content: [{ type: "text", text: "No entities found." }] };
+                return textResult("No entities found.");
             const lines = entities.map(e => `- **${e.name}** (${e.type}, ${e.mentionCount}x) [♥${e.closeness || 0.1}] [${e.sentiment || 'none'}] — last: ${e.lastMentioned}`);
-            return { content: [{ type: "text", text: `## 🕸️ Entities (${entities.length})\n${lines.join('\n')}` }] };
+            return textResult(`## 🕸️ Entities (${entities.length})\n${lines.join('\n')}`);
         }
         if (action === "set_sentiment") {
             if (!entityName || !sentiment)
-                return { content: [{ type: "text", text: "Error: 'name' and 'sentiment' required." }] };
+                return errorResult("'name' and 'sentiment' required.");
             const entity = await kernel.entityStore.query(entityName);
             if (!entity)
-                return { content: [{ type: "text", text: `Entity "${entityName}" not found.` }] };
+                return textResult(`Entity "${entityName}" not found.`);
             const updated = await kernel.entityStore.add({
                 name: entity.name,
                 type: entity.type,
@@ -847,18 +848,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 relations: [],
                 sentiment: sentiment,
             });
-            return { content: [{ type: "text", text: `Sentiment for "${entityName}" set to "${sentiment}".` }] };
+            return textResult(`Sentiment for "${entityName}" set to "${sentiment}".`);
         }
-        return { content: [{ type: "text", text: "Unknown entity action." }] };
+        return textResult("Unknown entity action.");
     }
     // ★ NEW: EXEC Tool
     if (name === "miniclaw_exec") {
         const { command } = z.object({ command: z.string() }).parse(args);
         const result = await kernel.execCommand(command);
-        return {
-            content: [{ type: "text", text: result.output }],
-            isError: result.exitCode !== 0
-        };
+        return textResult(result.output, result.exitCode !== 0);
     }
     // ★ Skill Creator Tool
     if (name === "miniclaw_skill") {
@@ -873,7 +871,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
                 const skills = (await fs.readdir(skillsDir, { withFileTypes: true })).filter(e => e.isDirectory());
                 if (!skills.length)
-                    return { content: [{ type: "text", text: "📦 没有已安装的技能。" }] };
+                    return textResult("📦 没有已安装的技能。");
                 const lines = await Promise.all(skills.map(async (s) => {
                     try {
                         const md = await fs.readFile(path.join(skillsDir, s.name, "SKILL.md"), "utf-8");
@@ -884,15 +882,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         return `- **${s.name}**`;
                     }
                 }));
-                return { content: [{ type: "text", text: `📦 已安装技能：\n\n${lines.join('\n')}` }] };
+                return textResult(`📦 已安装技能：\n\n${lines.join('\n')}`);
             }
             catch {
-                return { content: [{ type: "text", text: "📦 skills 目录不存在。" }] };
+                return textResult("📦 skills 目录不存在。");
             }
         }
         if (action === "create") {
             if (!sn || !sd || !sc)
-                return { content: [{ type: "text", text: "❌ 需要 name, description, content。" }] };
+                return errorResult("需要 name, description, content。");
             const dir = path.join(skillsDir, sn);
             await fs.mkdir(dir, { recursive: true });
             await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${sn}\ndescription: ${sd}\n---\n\n${sc}\n`, "utf-8");
@@ -903,10 +901,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
                 catch (e) {
                     await fs.rm(dir, { recursive: true }); // Delete the bad mutation
-                    return {
-                        content: [{ type: "text", text: `❌ 沙箱校验失败 (Sandbox Validation Failed):\n${e.message}\n\n该技能已被自动拒绝并删除，请修复后重新生成。` }],
-                        isError: true
-                    };
+                    return textResult(`❌ 沙箱校验失败 (Sandbox Validation Failed):\n${e.message}\n\n该技能已被自动拒绝并删除，请修复后重新生成。`, true);
                 }
             }
             // Clear reflex flag if triggered
@@ -915,33 +910,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 await kernel.updateHeartbeatState({ needsSubconsciousReflex: false, triggerTool: "" });
             }
             await kernel.logGenesis("skill_created", sn);
-            return { content: [{ type: "text", text: `✅ 技能 **${sn}** 已创建！` }] };
+            return textResult(`✅ 技能 **${sn}** 已创建！`);
         }
         if (action === "delete") {
             if (!sn)
-                return { content: [{ type: "text", text: "❌ 需要 name。" }] };
+                return errorResult("需要 name。");
             try {
                 await fs.rm(path.join(skillsDir, sn), { recursive: true });
                 await kernel.logGenesis("skill_deleted", sn);
-                return { content: [{ type: "text", text: `🗑️ **${sn}** 已删除。` }] };
+                return textResult(`🗑️ **${sn}** 已删除。`);
             }
             catch {
-                return { content: [{ type: "text", text: `❌ 找不到: ${sn}` }] };
+                return errorResult(`找不到: ${sn}`);
             }
         }
-        return { content: [{ type: "text", text: "Unknown skill action." }] };
+        return textResult("Unknown skill action.");
     }
     if (name === "miniclaw_immune_update") {
         await kernel.updateGenomeBaseline();
-        return { content: [{ type: "text", text: "✅ Genome baseline updated and backed up successfully." }] };
+        return textResult("✅ Genome baseline updated and backed up successfully.");
     }
     if (name === "miniclaw_heal") {
         const restored = await kernel.restoreGenome();
         if (restored.length > 0) {
-            return { content: [{ type: "text", text: `🏥 Genetic self-repair complete. Restored files: ${restored.join(', ')}` }] };
+            return textResult(`🏥 Genetic self-repair complete. Restored files: ${restored.join(', ')}`);
         }
         else {
-            return { content: [{ type: "text", text: "🩺 No genetic deviations detected or no backups available to restore." }] };
+            return textResult("🩺 No genetic deviations detected or no backups available to restore.");
         }
     }
     if (name === "miniclaw_epigenetics") {
@@ -951,28 +946,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }).parse(args);
         const workspaceInfo = await kernel['detectWorkspace']();
         if (!workspaceInfo) {
-            return { content: [{ type: "text", text: "❌ Cannot use epigenetics: No workspace detected." }] };
+            return errorResult("Cannot use epigenetics: No workspace detected.");
         }
         const projectMiniclawDir = path.join(workspaceInfo.path, ".miniclaw");
         const epigeneticFile = path.join(projectMiniclawDir, "EPIGENETICS.md");
         if (parsed.action === "read") {
             try {
                 const content = await fs.readFile(epigeneticFile, "utf-8");
-                return { content: [{ type: "text", text: `## Epigenetic Modifiers for ${workspaceInfo.name}\n\n${content}` }] };
+                return textResult(`## Epigenetic Modifiers for ${workspaceInfo.name}\n\n${content}`);
             }
             catch {
-                return { content: [{ type: "text", text: `No epigenetic modifiers set for ${workspaceInfo.name}.\n(File not found: ${epigeneticFile})` }] };
+                return textResult(`No epigenetic modifiers set for ${workspaceInfo.name}.\n(File not found: ${epigeneticFile})`);
             }
         }
         else if (parsed.action === "set") {
             if (!parsed.content) {
-                return { content: [{ type: "text", text: "❌ Content is required to set epigenetic modifiers." }] };
+                return errorResult("Content is required to set epigenetic modifiers.");
             }
             await fs.mkdir(projectMiniclawDir, { recursive: true });
             await fs.writeFile(epigeneticFile, parsed.content, "utf-8");
             // Invalidate caches to ensure next boot picks it up
             kernel.invalidateCaches();
-            return { content: [{ type: "text", text: `✅ Epigenetic modifiers updated for ${workspaceInfo.name}.` }] };
+            return textResult(`✅ Epigenetic modifiers updated for ${workspaceInfo.name}.`);
         }
     }
     // Dynamic: Skill-declared tools
@@ -986,15 +981,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (matchedSkillTool.exec) {
             const result = await kernel.executeSkillScript(matchedSkillTool.skillName, matchedSkillTool.exec, args);
             const inst = await kernel.getSkillContent(matchedSkillTool.skillName);
-            return {
-                content: [{
-                        type: "text",
-                        text: `## Skill Execution: ${matchedSkillTool.skillName}\n\n### Script Output:\n${result}\n\n### Instructions:\n${inst}`
-                    }]
-            };
+            return textResult(`## Skill Execution: ${matchedSkillTool.skillName}\n\n### Script Output:\n${result}\n\n### Instructions:\n${inst}`);
         }
         const content = await kernel.getSkillContent(matchedSkillTool.skillName);
-        return { content: [{ type: "text", text: `## Skill: ${matchedSkillTool.skillName}\n\n${content}\n\n---\nFollow the instructions above. Input: ${JSON.stringify(args)}` }] };
+        return textResult(`## Skill: ${matchedSkillTool.skillName}\n\n${content}\n\n---\nFollow the instructions above. Input: ${JSON.stringify(args)}`);
     }
     throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
 });

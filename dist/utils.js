@@ -158,3 +158,11 @@ export function fuzzyScore(line, query) {
     const matched = kws.filter(k => lo.includes(k)).length;
     return matched ? Math.round((matched / kws.length) * 80) : 0;
 }
+// ─── MCP Response Helpers ────────────────────────────────────────────────────
+/** Standard MCP text response (eliminates 49+ repetitions) */
+export const textResult = (text, isError = false) => ({
+    content: [{ type: "text", text }],
+    ...(isError && { isError: true })
+});
+/** Standard MCP error response */
+export const errorResult = (msg) => textResult(`❌ ${msg}`);
