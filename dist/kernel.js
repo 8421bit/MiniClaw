@@ -120,12 +120,25 @@ class AutonomicSystem {
         this.kernel = kernel;
     }
     start() {
-        // Start heartbeat pulse
-        this.timers.set('pulse', setInterval(() => this.pulse(), this.PULSE_INTERVAL_MS));
+        // Start heartbeat pulse with error protection
+        this.timers.set('pulse', this.safeInterval(() => this.pulse(), this.PULSE_INTERVAL_MS));
         // Check for dream conditions periodically
-        this.timers.set('dream', setInterval(() => this.checkDream(), 60 * 1000)); // Check every minute
+        this.timers.set('dream', this.safeInterval(() => this.checkDream(), 60 * 1000)); // Check every minute
         // Check scheduled jobs
-        this.timers.set('jobs', setInterval(() => this.checkScheduledJobs(), 60 * 1000)); // Check every minute
+        this.timers.set('jobs', this.safeInterval(() => this.checkScheduledJobs(), 60 * 1000)); // Check every minute
+        console.error('[MiniClaw] AutonomicSystem started (pulse, dream, jobs)');
+    }
+    // Safe interval wrapper that catches errors and prevents timer death
+    safeInterval(fn, ms) {
+        return setInterval(async () => {
+            try {
+                await fn();
+            }
+            catch (e) {
+                console.error(`[MiniClaw] Autonomic timer error: ${e instanceof Error ? e.message : String(e)}`);
+                // Timer continues running despite error
+            }
+        }, ms);
     }
     stop() {
         for (const timer of this.timers.values()) {
@@ -154,19 +167,26 @@ class AutonomicSystem {
                 console.error(`[MiniClaw] Pulse detected ${others.length} other agents`);
             }
         }
-        catch (e) { /* Silent fail */ }
+        catch (e) {
+            console.error(`[MiniClaw] Pulse error: ${e instanceof Error ? e.message : String(e)}`);
+        }
     }
     // === sys_dream: Subconscious Processing ===
     async checkDream() {
-        const now = Date.now();
-        if (now - this.lastDreamTime < this.DREAM_INTERVAL_MS)
-            return;
-        const analytics = await this.kernel.getAnalytics();
-        const lastActivityMs = new Date(analytics.lastActivity || 0).getTime();
-        const idleHours = (now - lastActivityMs) / (60 * 60 * 1000);
-        if (idleHours >= 4) {
-            await this.dream();
-            this.lastDreamTime = now;
+        try {
+            const now = Date.now();
+            if (now - this.lastDreamTime < this.DREAM_INTERVAL_MS)
+                return;
+            const analytics = await this.kernel.getAnalytics();
+            const lastActivityMs = new Date(analytics.lastActivity || 0).getTime();
+            const idleHours = (now - lastActivityMs) / (60 * 60 * 1000);
+            if (idleHours >= 4) {
+                await this.dream();
+                this.lastDreamTime = now;
+            }
+        }
+        catch (e) {
+            console.error(`[MiniClaw] CheckDream error: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
     async dream() {
@@ -270,7 +290,9 @@ class AutonomicSystem {
                 }
             }
         }
-        catch (e) { /* Silent fail */ }
+        catch (e) {
+            console.error(`[MiniClaw] ScheduledJobs error: ${e instanceof Error ? e.message : String(e)}`);
+        }
     }
     cronMatchesNow(expr, now, tz) {
         // Simple cron parser: supports "* * * * *" format
@@ -304,7 +326,9 @@ class AutonomicSystem {
             await fs.appendFile(heartbeatFile, entry, 'utf-8');
             console.error(`[MiniClaw] Scheduled job triggered: "${job.name}"`);
         }
-        catch (e) { /* Silent fail */ }
+        catch (e) {
+            console.error(`[MiniClaw] InjectJobHeartbeat error: ${e instanceof Error ? e.message : String(e)}`);
+        }
     }
 }
 // === Entity Store ===
