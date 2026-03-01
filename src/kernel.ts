@@ -165,6 +165,20 @@ export interface Analytics {
     metabolicDebt: Record<string, number>; // Total token cost per skill/tool
 }
 
+// === Pain Memory (Nociception) ===
+// Records negative experiences to form protective instincts
+interface PainMemory {
+    context: string;      // What situation caused the pain
+    action: string;       // What action led to it
+    consequence: string;  // What was the negative outcome
+    intensity: number;    // Pain intensity 0-1
+    timestamp: string;    // When it happened
+    weight: number;       // Current avoidance weight (decays over time)
+}
+
+const PAIN_DECAY_DAYS = 7;  // Pain memory half-life (days)
+const PAIN_THRESHOLD = 0.3; // Minimum weight to trigger avoidance
+
 // === Persistent State ===
 interface HeartbeatState {
     lastHeartbeat: string | null;
@@ -181,6 +195,7 @@ interface MiniClawState {
     heartbeat: HeartbeatState;
     genomeBaseline?: ContentHashes;
     attentionWeights: Record<string, number>; // Hebbian weights for context sections
+    painMemory: PainMemory[]; // Nociception: protective memory of negative experiences
 }
 
 const DEFAULT_HEARTBEAT: HeartbeatState = {
@@ -684,6 +699,7 @@ export class ContextKernel {
         previousHashes: {},
         heartbeat: { ...DEFAULT_HEARTBEAT },
         attentionWeights: {},
+        painMemory: [],
     };
     private stateLoaded = false;
     private budgetTokens: number;
@@ -815,6 +831,72 @@ export class ContextKernel {
         await this.saveState();
     }
 
+    // === Pain Memory (Nociception) ===
+    // Records negative experiences to form protective instincts
+
+    async recordPain(pain: Omit<PainMemory, 'timestamp' | 'weight'>): Promise<void> {
+        await this.loadState();
+        const newPain: PainMemory = {
+            ...pain,
+            timestamp: new Date().toISOString(),
+            weight: pain.intensity,
+        };
+        this.state.painMemory.push(newPain);
+        // Keep only recent 50 memories
+        if (this.state.painMemory.length > 50) {
+            this.state.painMemory = this.state.painMemory.slice(-50);
+        }
+        await this.saveState();
+        console.error(`[MiniClaw] 💢 Pain recorded: ${pain.action} in ${pain.context}`);
+    }
+
+    // Check if there's pain memory for given context/action (with decay)
+    async hasPainMemory(context: string, action: string): Promise<boolean> {
+        await this.loadState();
+        const now = Date.now();
+
+        for (const pain of this.state.painMemory) {
+            const daysSince = (now - new Date(pain.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+            const decayedWeight = pain.weight * Math.pow(0.5, daysSince / PAIN_DECAY_DAYS);
+
+            if (decayedWeight > PAIN_THRESHOLD) {
+                // Fuzzy match context and action
+                const contextMatch = context.includes(pain.context) || pain.context.includes(context);
+                const actionMatch = action === pain.action || action.includes(pain.action) || pain.action.includes(action);
+                if (contextMatch || actionMatch) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Get current pain status for vitals
+    async getPainStatus(): Promise<{ count: number; totalWeight: number; recent: PainMemory[] }> {
+        await this.loadState();
+        const now = Date.now();
+        let totalWeight = 0;
+        const recent: PainMemory[] = [];
+
+        for (const pain of this.state.painMemory) {
+            const daysSince = (now - new Date(pain.timestamp).getTime()) / (1000 * 60 * 60 * 24);
+            const decayedWeight = pain.weight * Math.pow(0.5, daysSince / PAIN_DECAY_DAYS);
+
+            if (decayedWeight > 0.1) {
+                totalWeight += decayedWeight;
+                if (recent.length < 3) {
+                    recent.push({ ...pain, weight: decayedWeight });
+                }
+            }
+        }
+
+        return {
+            count: this.state.painMemory.length,
+            totalWeight,
+            recent,
+        };
+    }
+
     // ★ Genesis Logger
     async logGenesis(event: string, target: string, type?: string): Promise<void> {
         const genesisFile = path.join(MINICLAW_DIR, "memory", "genesis.jsonl");
@@ -888,6 +970,10 @@ export class ContextKernel {
             newConceptsCount = (conceptsContent.match(/^- \*\*/gm) || []).length;
         } catch { /* CONCEPTS.md doesn't exist yet */ }
 
+        // pain_load: total weighted pain memory
+        const painStatus = await this.getPainStatus();
+        const painLoad = Math.round(painStatus.totalWeight * 100) / 100;
+
         return {
             idle_hours: idleHours,
             session_streak: streak,
@@ -896,6 +982,8 @@ export class ContextKernel {
             avg_boot_ms: avgBoot,
             frustration_index: frustrationScore,
             new_concepts_learned: newConceptsCount,
+            pain_load: painLoad,
+            pain_count: painStatus.count,
         };
     }
 
@@ -957,6 +1045,7 @@ export class ContextKernel {
             heartbeat: { ...DEFAULT_HEARTBEAT },
             previousHashes: {},
             attentionWeights: {},
+            painMemory: [],
         };
         this.stashLoaded = false;
         this.stateLoaded = false;

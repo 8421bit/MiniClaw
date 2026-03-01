@@ -580,12 +580,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const toolStartTime = Date.now();
 
+    // ★ Pain Memory: Check for past negative experiences with this tool
+    const hasPain = await kernel.hasPainMemory("", name);
+    if (hasPain) {
+        console.error(`[MiniClaw] 💢 I recall some pain with ${name}... proceeding with caution`);
+    }
+
     // ★ Analytics: track every tool call with energy estimation (Metabolism)
     const inputSize = JSON.stringify(args || {}).length;
     const energyEstimate = Math.ceil(inputSize / 4) + 100; // Base cost 100 + input context
     await kernel.trackTool(name, energyEstimate);
 
-    if (name === "miniclaw_read") {
+    try {
+        if (name === "miniclaw_read") {
         return textResult(await getContextContent("full"));
     }
 
@@ -991,7 +998,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return textResult(`## Skill: ${matchedSkillTool.skillName}\n\n${content}\n\n---\nFollow the instructions above. Input: ${JSON.stringify(args)}`);
     }
 
-    throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+    } catch (e) {
+        // ★ Pain Memory: Record negative experiences
+        await kernel.recordPain({
+            context: JSON.stringify(args || {}),
+            action: name,
+            consequence: e instanceof Error ? e.message : String(e),
+            intensity: 0.5,
+        });
+        throw e;
+    }
 });
 
 // --- Prompts ---

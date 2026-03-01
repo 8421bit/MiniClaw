@@ -563,430 +563,447 @@ async function getContextContent(mode = "full") {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const toolStartTime = Date.now();
+    // ★ Pain Memory: Check for past negative experiences with this tool
+    const hasPain = await kernel.hasPainMemory("", name);
+    if (hasPain) {
+        console.error(`[MiniClaw] 💢 I recall some pain with ${name}... proceeding with caution`);
+    }
     // ★ Analytics: track every tool call with energy estimation (Metabolism)
     const inputSize = JSON.stringify(args || {}).length;
     const energyEstimate = Math.ceil(inputSize / 4) + 100; // Base cost 100 + input context
     await kernel.trackTool(name, energyEstimate);
-    if (name === "miniclaw_read") {
-        return textResult(await getContextContent("full"));
-    }
-    if (name === "miniclaw_update") {
-        const parsed = z.object({
-            action: z.enum(["write", "list", "delete"]).optional().default("write"),
-            filename: z.string().optional(),
-            content: z.string().optional(),
-        }).parse(args);
-        const action = parsed.action;
-        // --- LIST: show all files with their boot-priority ---
-        if (action === "list") {
-            await ensureDir();
-            const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
-            const mdFiles = entries.filter(e => e.isFile() && e.name.endsWith('.md'));
-            const lines = [];
-            for (const f of mdFiles) {
-                const fileContent = await fs.readFile(path.join(MINICLAW_DIR, f.name), 'utf-8');
-                const fmMatch = fileContent.match(/^---\n([\s\S]*?)\n---/);
-                let priority = '-';
-                if (fmMatch) {
-                    const bpMatch = fmMatch[1].match(/boot-priority:\s*(\d+)/);
-                    if (bpMatch)
-                        priority = bpMatch[1];
-                }
-                const isCore = protectedFiles.has(f.name) ? '\ud83d\udd12' : '\ud83d\udcc4';
-                const stat = await fs.stat(path.join(MINICLAW_DIR, f.name));
-                lines.push(`${isCore} **${f.name}** \u2014 ${stat.size}B | boot-priority: ${priority}`);
-            }
-            return textResult(lines.length > 0 ? `\ud83d\udcc2 Files in ~/.miniclaw/:\n\n${lines.join('\n')}` : '\ud83d\udcc2 No files found.');
+    try {
+        if (name === "miniclaw_read") {
+            return textResult(await getContextContent("full"));
         }
-        // --- DELETE: remove non-core files ---
-        if (action === "delete") {
-            if (!parsed.filename)
-                throw new Error("filename is required for delete.");
-            if (protectedFiles.has(parsed.filename)) {
-                return errorResult(`Cannot delete core file: ${parsed.filename}`);
-            }
-            const p = path.join(MINICLAW_DIR, parsed.filename);
-            try {
-                await fs.unlink(p);
-                await kernel.logGenesis("file_deleted", parsed.filename);
-                try {
-                    await kernel.runSkillHooks("onFileChanged", { filename: parsed.filename });
-                }
-                catch (e) {
-                    console.error(`[MiniClaw] onFileChanged hook error: ${e}`);
-                }
-                return textResult(`\ud83d\uddd1\ufe0f Deleted ${parsed.filename}`);
-            }
-            catch {
-                return errorResult(`File not found: ${parsed.filename}`);
-            }
-        }
-        // --- WRITE: create or update file ---
-        if (!parsed.filename)
-            throw new Error("filename is required for write.");
-        if (!parsed.content && parsed.content !== "")
-            throw new Error("content is required for write.");
-        const filename = parsed.filename;
-        const writeContent = parsed.content;
-        // Security: no path traversal
-        if (filename.includes('..') || filename.includes('/')) {
-            throw new Error("Filename must be a simple name like 'GOALS.md', no paths allowed.");
-        }
-        if (!filename.endsWith('.md')) {
-            throw new Error("Only .md files are allowed.");
-        }
-        await ensureDir();
-        const p = path.join(MINICLAW_DIR, filename);
-        const isNewFile = !protectedFiles.has(filename) && !(await fs.access(p).then(() => true, () => false));
-        try {
-            await fs.copyFile(p, p + ".bak");
-        }
-        catch (e) {
-            console.error(`[MiniClaw] Backup failed: ${e}`);
-        }
-        await fs.writeFile(p, writeContent, "utf-8");
-        if (filename === "MEMORY.md") {
-            await kernel.updateHeartbeatState({
-                needsDistill: false,
-                lastDistill: new Date().toISOString(),
-            });
-        }
-        // Fire skill hooks
-        try {
-            await kernel.runSkillHooks("onMemoryWrite", { filename });
-        }
-        catch (e) {
-            console.error(`[MiniClaw] onMemoryWrite hook error: ${e}`);
-        }
-        if (isNewFile) {
-            await kernel.logGenesis("file_created", filename);
-            try {
-                await kernel.runSkillHooks("onFileCreated", { filename });
-            }
-            catch (e) {
-                console.error(`[MiniClaw] onFileCreated hook error: ${e}`);
-            }
-        }
-        // ★ Track file changes for self-observation
-        try {
-            await kernel.trackFileChange(filename);
-        }
-        catch (e) {
-            console.error(`[MiniClaw] Track file change error: ${e}`);
-        }
-        return textResult(isNewFile ? `✨ Created new file: ${filename}` : `Updated ${filename}.`);
-    }
-    if (name === "miniclaw_introspect") {
-        const scope = args?.scope || "summary";
-        const analytics = await kernel.getAnalytics();
-        if (scope === "tools") {
-            const sorted = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
-            const lines = sorted.map(([tool, count]) => `- ${tool}: ${count}x`);
-            return textResult(`\ud83d\udd27 Tool Usage:\n\n${lines.join('\n') || '(no data yet)'}`);
-        }
-        if (scope === "files") {
-            const fc = analytics.fileChanges || {};
-            const sorted = Object.entries(fc).sort((a, b) => b[1] - a[1]);
-            const lines = sorted.map(([file, count]) => `- ${file}: ${count} changes`);
-            // Also list dynamic files
-            try {
+        if (name === "miniclaw_update") {
+            const parsed = z.object({
+                action: z.enum(["write", "list", "delete"]).optional().default("write"),
+                filename: z.string().optional(),
+                content: z.string().optional(),
+            }).parse(args);
+            const action = parsed.action;
+            // --- LIST: show all files with their boot-priority ---
+            if (action === "list") {
                 await ensureDir();
                 const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
-                const dynamicMds = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !protectedFiles.has(e.name));
-                if (dynamicMds.length > 0) {
-                    lines.push(`\n\ud83e\udde9 Custom Files: ${dynamicMds.map(f => f.name).join(', ')}`);
+                const mdFiles = entries.filter(e => e.isFile() && e.name.endsWith('.md'));
+                const lines = [];
+                for (const f of mdFiles) {
+                    const fileContent = await fs.readFile(path.join(MINICLAW_DIR, f.name), 'utf-8');
+                    const fmMatch = fileContent.match(/^---\n([\s\S]*?)\n---/);
+                    let priority = '-';
+                    if (fmMatch) {
+                        const bpMatch = fmMatch[1].match(/boot-priority:\s*(\d+)/);
+                        if (bpMatch)
+                            priority = bpMatch[1];
+                    }
+                    const isCore = protectedFiles.has(f.name) ? '\ud83d\udd12' : '\ud83d\udcc4';
+                    const stat = await fs.stat(path.join(MINICLAW_DIR, f.name));
+                    lines.push(`${isCore} **${f.name}** \u2014 ${stat.size}B | boot-priority: ${priority}`);
+                }
+                return textResult(lines.length > 0 ? `\ud83d\udcc2 Files in ~/.miniclaw/:\n\n${lines.join('\n')}` : '\ud83d\udcc2 No files found.');
+            }
+            // --- DELETE: remove non-core files ---
+            if (action === "delete") {
+                if (!parsed.filename)
+                    throw new Error("filename is required for delete.");
+                if (protectedFiles.has(parsed.filename)) {
+                    return errorResult(`Cannot delete core file: ${parsed.filename}`);
+                }
+                const p = path.join(MINICLAW_DIR, parsed.filename);
+                try {
+                    await fs.unlink(p);
+                    await kernel.logGenesis("file_deleted", parsed.filename);
+                    try {
+                        await kernel.runSkillHooks("onFileChanged", { filename: parsed.filename });
+                    }
+                    catch (e) {
+                        console.error(`[MiniClaw] onFileChanged hook error: ${e}`);
+                    }
+                    return textResult(`\ud83d\uddd1\ufe0f Deleted ${parsed.filename}`);
+                }
+                catch {
+                    return errorResult(`File not found: ${parsed.filename}`);
                 }
             }
-            catch { /* skip */ }
-            return textResult(`\ud83d\udcc1 File Changes:\n\n${lines.join('\n') || '(no data yet)'}`);
-        }
-        if (scope === "genesis") {
+            // --- WRITE: create or update file ---
+            if (!parsed.filename)
+                throw new Error("filename is required for write.");
+            if (!parsed.content && parsed.content !== "")
+                throw new Error("content is required for write.");
+            const filename = parsed.filename;
+            const writeContent = parsed.content;
+            // Security: no path traversal
+            if (filename.includes('..') || filename.includes('/')) {
+                throw new Error("Filename must be a simple name like 'GOALS.md', no paths allowed.");
+            }
+            if (!filename.endsWith('.md')) {
+                throw new Error("Only .md files are allowed.");
+            }
+            await ensureDir();
+            const p = path.join(MINICLAW_DIR, filename);
+            const isNewFile = !protectedFiles.has(filename) && !(await fs.access(p).then(() => true, () => false));
             try {
-                const genesisFile = path.join(MINICLAW_DIR, "memory", "genesis.jsonl");
-                const logs = await fs.readFile(genesisFile, "utf-8");
-                const lines = logs.trim().split('\n').filter(Boolean).slice(-50); // last 50
-                const formatted = lines.map(l => {
-                    const e = JSON.parse(l);
-                    return `[${e.ts.split('T')[0]}] ${e.event}: ${e.target} ${e.type ? `(${e.type})` : ''}`;
-                });
-                return textResult(`## 🧬 Genesis Log (Last 50 changes)\n\n${formatted.join('\n')}`);
-            }
-            catch {
-                return textResult("## 🧬 Genesis Log\n\n(No evolution events logged yet)");
-            }
-        }
-        // Default: summary
-        const toolEntries = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
-        const topTools = toolEntries.slice(0, 5).map(([t, c]) => `${t}(${c})`).join(', ') || 'none';
-        const hours = analytics.activeHours || new Array(24).fill(0);
-        const activeSlots = hours.map((c, h) => ({ h, c })).filter(x => x.c > 0).sort((a, b) => b.c - a.c);
-        const topHours = activeSlots.slice(0, 3).map(x => `${x.h}:00(${x.c})`).join(', ') || 'none';
-        const fc = analytics.fileChanges || {};
-        const topFiles = Object.entries(fc).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, c]) => `${f}(${c})`).join(', ') || 'none';
-        const entityCount = await kernel.entityStore.getCount();
-        // Count dynamic files
-        let dynamicCount = 0;
-        try {
-            const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
-            dynamicCount = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !protectedFiles.has(e.name)).length;
-        }
-        catch { /* skip */ }
-        const report = [
-            `== \ud83d\udd0d Self-Observation Report ==`,
-            ``,
-            `\ud83d\udd27 Top Tools: ${topTools}`,
-            `\u23f0 Most Active: ${topHours}`,
-            `\ud83d\udcc1 Top Files: ${topFiles}`,
-            `\ud83e\udde0 Sessions: ${analytics.bootCount} boots, avg ${analytics.totalBootMs > 0 ? Math.round(analytics.totalBootMs / analytics.bootCount) : 0}ms`,
-            `\ud83d\udd78\ufe0f Entities: ${entityCount}`,
-            `\ud83e\udde9 Custom Files: ${dynamicCount}`,
-            `\ud83d\udcdd Distillations: ${analytics.dailyDistillations}`,
-            `\ud83d\udccd Last Activity: ${analytics.lastActivity || 'unknown'}`,
-        ];
-        return textResult(report.join('\n'));
-    }
-    if (name === "miniclaw_note") {
-        const { text } = z.object({ text: z.string() }).parse(args);
-        await ensureDir();
-        const today = new Date().toISOString().split('T')[0];
-        const p = path.join(MINICLAW_DIR, "memory", `${today}.md`);
-        await fs.mkdir(path.dirname(p), { recursive: true });
-        await fs.appendFile(p, `\n- [${new Date().toLocaleTimeString()}] ${text}\n`, "utf-8");
-        return textResult(`Logged to memory/${today}.md`);
-    }
-    if (name === "miniclaw_archive") {
-        await ensureDir();
-        const today = new Date().toISOString().split('T')[0];
-        const src = path.join(MINICLAW_DIR, "memory", `${today}.md`);
-        const archiveDir = path.join(MINICLAW_DIR, "memory", "archived");
-        const dest = path.join(archiveDir, `${today}.md`);
-        await fs.mkdir(archiveDir, { recursive: true });
-        try {
-            await fs.rename(src, dest);
-            return textResult(`Archived today's log.`);
-        }
-        catch {
-            return textResult(`No log found to archive.`);
-        }
-    }
-    // ★ Entity Memory Tool
-    if (name === "miniclaw_entity") {
-        const { action, name: entityName, type: entityType, attributes, relation, filterType, sentiment } = z.object({
-            action: z.enum(["add", "remove", "link", "query", "list", "set_sentiment"]),
-            name: z.string().optional(),
-            type: z.enum(["person", "project", "tool", "concept", "place", "other"]).optional(),
-            attributes: z.record(z.string()).optional(),
-            relation: z.string().optional(),
-            filterType: z.enum(["person", "project", "tool", "concept", "place", "other"]).optional(),
-            sentiment: z.string().optional(),
-        }).parse(args);
-        if (action === "add") {
-            if (!entityName || !entityType) {
-                return errorResult("'name' and 'type' required for add.");
-            }
-            const entity = await kernel.entityStore.add({
-                name: entityName,
-                type: entityType,
-                attributes: attributes || {},
-                relations: relation ? [relation] : [],
-                sentiment: sentiment,
-            });
-            // ★ Fire onNewEntity skill hook
-            try {
-                await kernel.runSkillHooks("onNewEntity");
+                await fs.copyFile(p, p + ".bak");
             }
             catch (e) {
-                console.error(`[MiniClaw] onNewEntity hook error: ${e}`);
+                console.error(`[MiniClaw] Backup failed: ${e}`);
             }
-            return textResult(`Entity "${entity.name}" (${entity.type}) — ${entity.mentionCount} mentions. Relations: ${entity.relations.join(', ') || 'none'}`);
-        }
-        if (action === "remove") {
-            if (!entityName)
-                return errorResult("'name' required.");
-            const removed = await kernel.entityStore.remove(entityName);
-            return textResult(removed ? `Removed "${entityName}".` : `Entity "${entityName}" not found.`);
-        }
-        if (action === "link") {
-            if (!entityName || !relation)
-                return errorResult("'name' and 'relation' required.");
-            const linked = await kernel.entityStore.link(entityName, relation);
-            return textResult(linked ? `Linked "${entityName}" → "${relation}".` : `Entity "${entityName}" not found.`);
-        }
-        if (action === "query") {
-            if (!entityName)
-                return errorResult("'name' required.");
-            const entity = await kernel.entityStore.query(entityName);
-            if (!entity)
-                return textResult(`Entity "${entityName}" not found.`);
-            const attrs = Object.entries(entity.attributes).map(([k, v]) => `${k}: ${v}`).join(', ');
-            const report = [
-                `**${entity.name}** (${entity.type})`,
-                `Mentions: ${entity.mentionCount} | Closeness: ${entity.closeness || 0.1} | Sentiment: ${entity.sentiment || 'none'}`,
-                `First: ${entity.firstMentioned} | Last: ${entity.lastMentioned}`,
-                attrs ? `Attributes: ${attrs}` : '',
-                entity.relations.length > 0 ? `Relations: ${entity.relations.join('; ')}` : '',
-            ].filter(Boolean).join('\n');
-            return textResult(report);
-        }
-        if (action === "list") {
-            const entities = await kernel.entityStore.list(filterType);
-            if (entities.length === 0)
-                return textResult("No entities found.");
-            const lines = entities.map(e => `- **${e.name}** (${e.type}, ${e.mentionCount}x) [♥${e.closeness || 0.1}] [${e.sentiment || 'none'}] — last: ${e.lastMentioned}`);
-            return textResult(`## 🕸️ Entities (${entities.length})\n${lines.join('\n')}`);
-        }
-        if (action === "set_sentiment") {
-            if (!entityName || !sentiment)
-                return errorResult("'name' and 'sentiment' required.");
-            const entity = await kernel.entityStore.query(entityName);
-            if (!entity)
-                return textResult(`Entity "${entityName}" not found.`);
-            const updated = await kernel.entityStore.add({
-                name: entity.name,
-                type: entity.type,
-                attributes: {},
-                relations: [],
-                sentiment: sentiment,
-            });
-            return textResult(`Sentiment for "${entityName}" set to "${sentiment}".`);
-        }
-        return textResult("Unknown entity action.");
-    }
-    // ★ NEW: EXEC Tool
-    if (name === "miniclaw_exec") {
-        const { command } = z.object({ command: z.string() }).parse(args);
-        const result = await kernel.execCommand(command);
-        return textResult(result.output, result.exitCode !== 0);
-    }
-    // ★ Skill Creator Tool
-    if (name === "miniclaw_skill") {
-        const { action, name: sn, description: sd, content: sc, validationCmd } = z.object({
-            action: z.enum(["create", "list", "delete"]),
-            name: z.string().optional(), description: z.string().optional(), content: z.string().optional(),
-            validationCmd: z.string().optional()
-        }).parse(args);
-        const skillsDir = path.join(MINICLAW_DIR, "skills");
-        await fs.mkdir(skillsDir, { recursive: true }).catch(() => { });
-        if (action === "list") {
+            await fs.writeFile(p, writeContent, "utf-8");
+            if (filename === "MEMORY.md") {
+                await kernel.updateHeartbeatState({
+                    needsDistill: false,
+                    lastDistill: new Date().toISOString(),
+                });
+            }
+            // Fire skill hooks
             try {
-                const skills = (await fs.readdir(skillsDir, { withFileTypes: true })).filter(e => e.isDirectory());
-                if (!skills.length)
-                    return textResult("📦 没有已安装的技能。");
-                const lines = await Promise.all(skills.map(async (s) => {
-                    try {
-                        const md = await fs.readFile(path.join(skillsDir, s.name, "SKILL.md"), "utf-8");
-                        const desc = md.split('\n').find(l => l.startsWith('description:'))?.replace('description:', '').trim();
-                        return `- **${s.name}** — ${desc || 'No description'}`;
-                    }
-                    catch {
-                        return `- **${s.name}**`;
-                    }
-                }));
-                return textResult(`📦 已安装技能：\n\n${lines.join('\n')}`);
+                await kernel.runSkillHooks("onMemoryWrite", { filename });
             }
-            catch {
-                return textResult("📦 skills 目录不存在。");
+            catch (e) {
+                console.error(`[MiniClaw] onMemoryWrite hook error: ${e}`);
             }
-        }
-        if (action === "create") {
-            if (!sn || !sd || !sc)
-                return errorResult("需要 name, description, content。");
-            const dir = path.join(skillsDir, sn);
-            await fs.mkdir(dir, { recursive: true });
-            await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${sn}\ndescription: ${sd}\n---\n\n${sc}\n`, "utf-8");
-            // Sandbox Validation Phase
-            if (validationCmd) {
+            if (isNewFile) {
+                await kernel.logGenesis("file_created", filename);
                 try {
-                    await kernel.validateSkillSandbox(sn, validationCmd);
+                    await kernel.runSkillHooks("onFileCreated", { filename });
                 }
                 catch (e) {
-                    await fs.rm(dir, { recursive: true }); // Delete the bad mutation
-                    return textResult(`❌ 沙箱校验失败 (Sandbox Validation Failed):\n${e.message}\n\n该技能已被自动拒绝并删除，请修复后重新生成。`, true);
+                    console.error(`[MiniClaw] onFileCreated hook error: ${e}`);
                 }
             }
-            // Clear reflex flag if triggered
-            const hbState = await kernel.getHeartbeatState();
-            if (hbState.needsSubconsciousReflex) {
-                await kernel.updateHeartbeatState({ needsSubconsciousReflex: false, triggerTool: "" });
-            }
-            await kernel.logGenesis("skill_created", sn);
-            return textResult(`✅ 技能 **${sn}** 已创建！`);
-        }
-        if (action === "delete") {
-            if (!sn)
-                return errorResult("需要 name。");
+            // ★ Track file changes for self-observation
             try {
-                await fs.rm(path.join(skillsDir, sn), { recursive: true });
-                await kernel.logGenesis("skill_deleted", sn);
-                return textResult(`🗑️ **${sn}** 已删除。`);
+                await kernel.trackFileChange(filename);
+            }
+            catch (e) {
+                console.error(`[MiniClaw] Track file change error: ${e}`);
+            }
+            return textResult(isNewFile ? `✨ Created new file: ${filename}` : `Updated ${filename}.`);
+        }
+        if (name === "miniclaw_introspect") {
+            const scope = args?.scope || "summary";
+            const analytics = await kernel.getAnalytics();
+            if (scope === "tools") {
+                const sorted = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
+                const lines = sorted.map(([tool, count]) => `- ${tool}: ${count}x`);
+                return textResult(`\ud83d\udd27 Tool Usage:\n\n${lines.join('\n') || '(no data yet)'}`);
+            }
+            if (scope === "files") {
+                const fc = analytics.fileChanges || {};
+                const sorted = Object.entries(fc).sort((a, b) => b[1] - a[1]);
+                const lines = sorted.map(([file, count]) => `- ${file}: ${count} changes`);
+                // Also list dynamic files
+                try {
+                    await ensureDir();
+                    const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
+                    const dynamicMds = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !protectedFiles.has(e.name));
+                    if (dynamicMds.length > 0) {
+                        lines.push(`\n\ud83e\udde9 Custom Files: ${dynamicMds.map(f => f.name).join(', ')}`);
+                    }
+                }
+                catch { /* skip */ }
+                return textResult(`\ud83d\udcc1 File Changes:\n\n${lines.join('\n') || '(no data yet)'}`);
+            }
+            if (scope === "genesis") {
+                try {
+                    const genesisFile = path.join(MINICLAW_DIR, "memory", "genesis.jsonl");
+                    const logs = await fs.readFile(genesisFile, "utf-8");
+                    const lines = logs.trim().split('\n').filter(Boolean).slice(-50); // last 50
+                    const formatted = lines.map(l => {
+                        const e = JSON.parse(l);
+                        return `[${e.ts.split('T')[0]}] ${e.event}: ${e.target} ${e.type ? `(${e.type})` : ''}`;
+                    });
+                    return textResult(`## 🧬 Genesis Log (Last 50 changes)\n\n${formatted.join('\n')}`);
+                }
+                catch {
+                    return textResult("## 🧬 Genesis Log\n\n(No evolution events logged yet)");
+                }
+            }
+            // Default: summary
+            const toolEntries = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
+            const topTools = toolEntries.slice(0, 5).map(([t, c]) => `${t}(${c})`).join(', ') || 'none';
+            const hours = analytics.activeHours || new Array(24).fill(0);
+            const activeSlots = hours.map((c, h) => ({ h, c })).filter(x => x.c > 0).sort((a, b) => b.c - a.c);
+            const topHours = activeSlots.slice(0, 3).map(x => `${x.h}:00(${x.c})`).join(', ') || 'none';
+            const fc = analytics.fileChanges || {};
+            const topFiles = Object.entries(fc).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, c]) => `${f}(${c})`).join(', ') || 'none';
+            const entityCount = await kernel.entityStore.getCount();
+            // Count dynamic files
+            let dynamicCount = 0;
+            try {
+                const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
+                dynamicCount = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !protectedFiles.has(e.name)).length;
+            }
+            catch { /* skip */ }
+            const report = [
+                `== \ud83d\udd0d Self-Observation Report ==`,
+                ``,
+                `\ud83d\udd27 Top Tools: ${topTools}`,
+                `\u23f0 Most Active: ${topHours}`,
+                `\ud83d\udcc1 Top Files: ${topFiles}`,
+                `\ud83e\udde0 Sessions: ${analytics.bootCount} boots, avg ${analytics.totalBootMs > 0 ? Math.round(analytics.totalBootMs / analytics.bootCount) : 0}ms`,
+                `\ud83d\udd78\ufe0f Entities: ${entityCount}`,
+                `\ud83e\udde9 Custom Files: ${dynamicCount}`,
+                `\ud83d\udcdd Distillations: ${analytics.dailyDistillations}`,
+                `\ud83d\udccd Last Activity: ${analytics.lastActivity || 'unknown'}`,
+            ];
+            return textResult(report.join('\n'));
+        }
+        if (name === "miniclaw_note") {
+            const { text } = z.object({ text: z.string() }).parse(args);
+            await ensureDir();
+            const today = new Date().toISOString().split('T')[0];
+            const p = path.join(MINICLAW_DIR, "memory", `${today}.md`);
+            await fs.mkdir(path.dirname(p), { recursive: true });
+            await fs.appendFile(p, `\n- [${new Date().toLocaleTimeString()}] ${text}\n`, "utf-8");
+            return textResult(`Logged to memory/${today}.md`);
+        }
+        if (name === "miniclaw_archive") {
+            await ensureDir();
+            const today = new Date().toISOString().split('T')[0];
+            const src = path.join(MINICLAW_DIR, "memory", `${today}.md`);
+            const archiveDir = path.join(MINICLAW_DIR, "memory", "archived");
+            const dest = path.join(archiveDir, `${today}.md`);
+            await fs.mkdir(archiveDir, { recursive: true });
+            try {
+                await fs.rename(src, dest);
+                return textResult(`Archived today's log.`);
             }
             catch {
-                return errorResult(`找不到: ${sn}`);
+                return textResult(`No log found to archive.`);
             }
         }
-        return textResult("Unknown skill action.");
-    }
-    if (name === "miniclaw_immune_update") {
-        await kernel.updateGenomeBaseline();
-        return textResult("✅ Genome baseline updated and backed up successfully.");
-    }
-    if (name === "miniclaw_heal") {
-        const restored = await kernel.restoreGenome();
-        if (restored.length > 0) {
-            return textResult(`🏥 Genetic self-repair complete. Restored files: ${restored.join(', ')}`);
-        }
-        else {
-            return textResult("🩺 No genetic deviations detected or no backups available to restore.");
-        }
-    }
-    if (name === "miniclaw_epigenetics") {
-        const parsed = z.object({
-            action: z.enum(["read", "set"]),
-            content: z.string().optional()
-        }).parse(args);
-        const workspaceInfo = await kernel['detectWorkspace']();
-        if (!workspaceInfo) {
-            return errorResult("Cannot use epigenetics: No workspace detected.");
-        }
-        const projectMiniclawDir = path.join(workspaceInfo.path, ".miniclaw");
-        const epigeneticFile = path.join(projectMiniclawDir, "EPIGENETICS.md");
-        if (parsed.action === "read") {
-            try {
-                const content = await fs.readFile(epigeneticFile, "utf-8");
-                return textResult(`## Epigenetic Modifiers for ${workspaceInfo.name}\n\n${content}`);
+        // ★ Entity Memory Tool
+        if (name === "miniclaw_entity") {
+            const { action, name: entityName, type: entityType, attributes, relation, filterType, sentiment } = z.object({
+                action: z.enum(["add", "remove", "link", "query", "list", "set_sentiment"]),
+                name: z.string().optional(),
+                type: z.enum(["person", "project", "tool", "concept", "place", "other"]).optional(),
+                attributes: z.record(z.string()).optional(),
+                relation: z.string().optional(),
+                filterType: z.enum(["person", "project", "tool", "concept", "place", "other"]).optional(),
+                sentiment: z.string().optional(),
+            }).parse(args);
+            if (action === "add") {
+                if (!entityName || !entityType) {
+                    return errorResult("'name' and 'type' required for add.");
+                }
+                const entity = await kernel.entityStore.add({
+                    name: entityName,
+                    type: entityType,
+                    attributes: attributes || {},
+                    relations: relation ? [relation] : [],
+                    sentiment: sentiment,
+                });
+                // ★ Fire onNewEntity skill hook
+                try {
+                    await kernel.runSkillHooks("onNewEntity");
+                }
+                catch (e) {
+                    console.error(`[MiniClaw] onNewEntity hook error: ${e}`);
+                }
+                return textResult(`Entity "${entity.name}" (${entity.type}) — ${entity.mentionCount} mentions. Relations: ${entity.relations.join(', ') || 'none'}`);
             }
-            catch {
-                return textResult(`No epigenetic modifiers set for ${workspaceInfo.name}.\n(File not found: ${epigeneticFile})`);
+            if (action === "remove") {
+                if (!entityName)
+                    return errorResult("'name' required.");
+                const removed = await kernel.entityStore.remove(entityName);
+                return textResult(removed ? `Removed "${entityName}".` : `Entity "${entityName}" not found.`);
+            }
+            if (action === "link") {
+                if (!entityName || !relation)
+                    return errorResult("'name' and 'relation' required.");
+                const linked = await kernel.entityStore.link(entityName, relation);
+                return textResult(linked ? `Linked "${entityName}" → "${relation}".` : `Entity "${entityName}" not found.`);
+            }
+            if (action === "query") {
+                if (!entityName)
+                    return errorResult("'name' required.");
+                const entity = await kernel.entityStore.query(entityName);
+                if (!entity)
+                    return textResult(`Entity "${entityName}" not found.`);
+                const attrs = Object.entries(entity.attributes).map(([k, v]) => `${k}: ${v}`).join(', ');
+                const report = [
+                    `**${entity.name}** (${entity.type})`,
+                    `Mentions: ${entity.mentionCount} | Closeness: ${entity.closeness || 0.1} | Sentiment: ${entity.sentiment || 'none'}`,
+                    `First: ${entity.firstMentioned} | Last: ${entity.lastMentioned}`,
+                    attrs ? `Attributes: ${attrs}` : '',
+                    entity.relations.length > 0 ? `Relations: ${entity.relations.join('; ')}` : '',
+                ].filter(Boolean).join('\n');
+                return textResult(report);
+            }
+            if (action === "list") {
+                const entities = await kernel.entityStore.list(filterType);
+                if (entities.length === 0)
+                    return textResult("No entities found.");
+                const lines = entities.map(e => `- **${e.name}** (${e.type}, ${e.mentionCount}x) [♥${e.closeness || 0.1}] [${e.sentiment || 'none'}] — last: ${e.lastMentioned}`);
+                return textResult(`## 🕸️ Entities (${entities.length})\n${lines.join('\n')}`);
+            }
+            if (action === "set_sentiment") {
+                if (!entityName || !sentiment)
+                    return errorResult("'name' and 'sentiment' required.");
+                const entity = await kernel.entityStore.query(entityName);
+                if (!entity)
+                    return textResult(`Entity "${entityName}" not found.`);
+                const updated = await kernel.entityStore.add({
+                    name: entity.name,
+                    type: entity.type,
+                    attributes: {},
+                    relations: [],
+                    sentiment: sentiment,
+                });
+                return textResult(`Sentiment for "${entityName}" set to "${sentiment}".`);
+            }
+            return textResult("Unknown entity action.");
+        }
+        // ★ NEW: EXEC Tool
+        if (name === "miniclaw_exec") {
+            const { command } = z.object({ command: z.string() }).parse(args);
+            const result = await kernel.execCommand(command);
+            return textResult(result.output, result.exitCode !== 0);
+        }
+        // ★ Skill Creator Tool
+        if (name === "miniclaw_skill") {
+            const { action, name: sn, description: sd, content: sc, validationCmd } = z.object({
+                action: z.enum(["create", "list", "delete"]),
+                name: z.string().optional(), description: z.string().optional(), content: z.string().optional(),
+                validationCmd: z.string().optional()
+            }).parse(args);
+            const skillsDir = path.join(MINICLAW_DIR, "skills");
+            await fs.mkdir(skillsDir, { recursive: true }).catch(() => { });
+            if (action === "list") {
+                try {
+                    const skills = (await fs.readdir(skillsDir, { withFileTypes: true })).filter(e => e.isDirectory());
+                    if (!skills.length)
+                        return textResult("📦 没有已安装的技能。");
+                    const lines = await Promise.all(skills.map(async (s) => {
+                        try {
+                            const md = await fs.readFile(path.join(skillsDir, s.name, "SKILL.md"), "utf-8");
+                            const desc = md.split('\n').find(l => l.startsWith('description:'))?.replace('description:', '').trim();
+                            return `- **${s.name}** — ${desc || 'No description'}`;
+                        }
+                        catch {
+                            return `- **${s.name}**`;
+                        }
+                    }));
+                    return textResult(`📦 已安装技能：\n\n${lines.join('\n')}`);
+                }
+                catch {
+                    return textResult("📦 skills 目录不存在。");
+                }
+            }
+            if (action === "create") {
+                if (!sn || !sd || !sc)
+                    return errorResult("需要 name, description, content。");
+                const dir = path.join(skillsDir, sn);
+                await fs.mkdir(dir, { recursive: true });
+                await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${sn}\ndescription: ${sd}\n---\n\n${sc}\n`, "utf-8");
+                // Sandbox Validation Phase
+                if (validationCmd) {
+                    try {
+                        await kernel.validateSkillSandbox(sn, validationCmd);
+                    }
+                    catch (e) {
+                        await fs.rm(dir, { recursive: true }); // Delete the bad mutation
+                        return textResult(`❌ 沙箱校验失败 (Sandbox Validation Failed):\n${e.message}\n\n该技能已被自动拒绝并删除，请修复后重新生成。`, true);
+                    }
+                }
+                // Clear reflex flag if triggered
+                const hbState = await kernel.getHeartbeatState();
+                if (hbState.needsSubconsciousReflex) {
+                    await kernel.updateHeartbeatState({ needsSubconsciousReflex: false, triggerTool: "" });
+                }
+                await kernel.logGenesis("skill_created", sn);
+                return textResult(`✅ 技能 **${sn}** 已创建！`);
+            }
+            if (action === "delete") {
+                if (!sn)
+                    return errorResult("需要 name。");
+                try {
+                    await fs.rm(path.join(skillsDir, sn), { recursive: true });
+                    await kernel.logGenesis("skill_deleted", sn);
+                    return textResult(`🗑️ **${sn}** 已删除。`);
+                }
+                catch {
+                    return errorResult(`找不到: ${sn}`);
+                }
+            }
+            return textResult("Unknown skill action.");
+        }
+        if (name === "miniclaw_immune_update") {
+            await kernel.updateGenomeBaseline();
+            return textResult("✅ Genome baseline updated and backed up successfully.");
+        }
+        if (name === "miniclaw_heal") {
+            const restored = await kernel.restoreGenome();
+            if (restored.length > 0) {
+                return textResult(`🏥 Genetic self-repair complete. Restored files: ${restored.join(', ')}`);
+            }
+            else {
+                return textResult("🩺 No genetic deviations detected or no backups available to restore.");
             }
         }
-        else if (parsed.action === "set") {
-            if (!parsed.content) {
-                return errorResult("Content is required to set epigenetic modifiers.");
+        if (name === "miniclaw_epigenetics") {
+            const parsed = z.object({
+                action: z.enum(["read", "set"]),
+                content: z.string().optional()
+            }).parse(args);
+            const workspaceInfo = await kernel['detectWorkspace']();
+            if (!workspaceInfo) {
+                return errorResult("Cannot use epigenetics: No workspace detected.");
             }
-            await fs.mkdir(projectMiniclawDir, { recursive: true });
-            await fs.writeFile(epigeneticFile, parsed.content, "utf-8");
-            // Invalidate caches to ensure next boot picks it up
-            kernel.invalidateCaches();
-            return textResult(`✅ Epigenetic modifiers updated for ${workspaceInfo.name}.`);
+            const projectMiniclawDir = path.join(workspaceInfo.path, ".miniclaw");
+            const epigeneticFile = path.join(projectMiniclawDir, "EPIGENETICS.md");
+            if (parsed.action === "read") {
+                try {
+                    const content = await fs.readFile(epigeneticFile, "utf-8");
+                    return textResult(`## Epigenetic Modifiers for ${workspaceInfo.name}\n\n${content}`);
+                }
+                catch {
+                    return textResult(`No epigenetic modifiers set for ${workspaceInfo.name}.\n(File not found: ${epigeneticFile})`);
+                }
+            }
+            else if (parsed.action === "set") {
+                if (!parsed.content) {
+                    return errorResult("Content is required to set epigenetic modifiers.");
+                }
+                await fs.mkdir(projectMiniclawDir, { recursive: true });
+                await fs.writeFile(epigeneticFile, parsed.content, "utf-8");
+                // Invalidate caches to ensure next boot picks it up
+                kernel.invalidateCaches();
+                return textResult(`✅ Epigenetic modifiers updated for ${workspaceInfo.name}.`);
+            }
         }
-    }
-    // Dynamic: Skill-declared tools
-    const skillToolMatch = await kernel.discoverSkillTools();
-    const matchedSkillTool = skillToolMatch.find(t => t.toolName === name);
-    if (matchedSkillTool) {
-        // ★ Track skill usage
-        const skillEnergy = Math.ceil(JSON.stringify(args || {}).length / 4) + 150; // Skills cost more (overhead)
-        await kernel.trackTool(`skill:${matchedSkillTool.skillName}`, skillEnergy);
-        // ★ Executable Skill Logic
-        if (matchedSkillTool.exec) {
-            const result = await kernel.executeSkillScript(matchedSkillTool.skillName, matchedSkillTool.exec, args);
-            const inst = await kernel.getSkillContent(matchedSkillTool.skillName);
-            return textResult(`## Skill Execution: ${matchedSkillTool.skillName}\n\n### Script Output:\n${result}\n\n### Instructions:\n${inst}`);
+        // Dynamic: Skill-declared tools
+        const skillToolMatch = await kernel.discoverSkillTools();
+        const matchedSkillTool = skillToolMatch.find(t => t.toolName === name);
+        if (matchedSkillTool) {
+            // ★ Track skill usage
+            const skillEnergy = Math.ceil(JSON.stringify(args || {}).length / 4) + 150; // Skills cost more (overhead)
+            await kernel.trackTool(`skill:${matchedSkillTool.skillName}`, skillEnergy);
+            // ★ Executable Skill Logic
+            if (matchedSkillTool.exec) {
+                const result = await kernel.executeSkillScript(matchedSkillTool.skillName, matchedSkillTool.exec, args);
+                const inst = await kernel.getSkillContent(matchedSkillTool.skillName);
+                return textResult(`## Skill Execution: ${matchedSkillTool.skillName}\n\n### Script Output:\n${result}\n\n### Instructions:\n${inst}`);
+            }
+            const content = await kernel.getSkillContent(matchedSkillTool.skillName);
+            return textResult(`## Skill: ${matchedSkillTool.skillName}\n\n${content}\n\n---\nFollow the instructions above. Input: ${JSON.stringify(args)}`);
         }
-        const content = await kernel.getSkillContent(matchedSkillTool.skillName);
-        return textResult(`## Skill: ${matchedSkillTool.skillName}\n\n${content}\n\n---\nFollow the instructions above. Input: ${JSON.stringify(args)}`);
+        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
-    throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+    catch (e) {
+        // ★ Pain Memory: Record negative experiences
+        await kernel.recordPain({
+            context: JSON.stringify(args || {}),
+            action: name,
+            consequence: e instanceof Error ? e.message : String(e),
+            intensity: 0.5,
+        });
+        throw e;
+    }
 });
 // --- Prompts ---
 server.setRequestHandler(ListPromptsRequestSchema, async () => {
