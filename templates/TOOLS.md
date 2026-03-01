@@ -23,7 +23,7 @@ read_when:
 ### Cluster-B: Acquired (后天习得)
 | Skill | Level | EXP | Mastery | Learned |
 |-------|:-----:|:---:|:-------:|:-------:|
-| sys_observer | 1 | 0 | novice | - |
+| *(empty - skills you install go here)* | - | - | - | - |
 
 ### Cluster-C: Prompts (协议能力)
 | Prompt | Description |

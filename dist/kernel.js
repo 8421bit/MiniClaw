@@ -5,6 +5,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
+import { analyzePatterns, triggerEvolution as runEvolution } from "./evolution.js";
 const execAsync = promisify(exec);
 // === Configuration & Constants ===
 const HOME_DIR = process.env.HOME || process.cwd();
@@ -232,24 +233,21 @@ class AutonomicSystem {
                 await fs.writeFile(heartbeatFile, dreamNote, 'utf-8');
             }
             console.error(`[MiniClaw] Dream complete. Tools: ${Object.keys(toolCounts).length}, Concepts: ${concepts.length}`);
-            // Trigger DNA evolution via sys_observer
+            // Trigger DNA evolution (core mechanism)
             await this.triggerEvolution();
         }
         catch (e) {
             console.error(`[MiniClaw] Dream failed:`, e);
         }
     }
-    // Trigger DNA evolution by calling sys_observer
+    // Trigger DNA evolution (core mechanism, not a skill)
     async triggerEvolution() {
         try {
-            const { exec } = await import('node:child_process');
-            const { promisify } = await import('node:util');
-            const execAsync = promisify(exec);
-            const observerPath = path.join(MINICLAW_DIR, 'skills', 'sys_observer', 'run.js');
-            const cmd = `node "${observerPath}" "${MINICLAW_DIR}" evolve`;
+            // First analyze patterns
+            await analyzePatterns(MINICLAW_DIR);
+            // Then trigger evolution
             console.error(`[MiniClaw] 🧬 Triggering DNA evolution...`);
-            const { stdout } = await execAsync(cmd);
-            const result = JSON.parse(stdout);
+            const result = await runEvolution(MINICLAW_DIR);
             if (result.evolved) {
                 console.error(`[MiniClaw] 🧬 Evolution complete: ${result.message}`);
                 if (result.appliedMutations && result.appliedMutations.length > 0) {
