@@ -28,11 +28,13 @@ This skill enables MiniClaw to learn implicitly from user interactions without e
 2. **Analyze**: Detects patterns using lightweight heuristics
 3. **Decide**: Determines if patterns are strong enough for evolution
 4. **Evolve**: Generates proposals to update DNA files
-5. **Apply**: Updates SOUL.md, USER_MODEL.md, TOOLS.md
+5. **Auto-Apply**: Automatically updates SOUL.md and USER.md with detected patterns
 
 ## Execution Rules
 
 - **Silent Mode**: Runs during idle time, no CLI output
-- **Trigger**: Called by heartbeat every 4+ hours of idle time
-- **Safety**: Always uses dry-run first, applies only high-confidence changes
+- **Trigger**: Called by AutonomicSystem.dream() every 4+ hours of idle time
+- **Auto-Evolution**: Automatically applies high-confidence changes to DNA
+- **Safety**: Only appends new information, never deletes existing content
 - **Cooldown**: Max 1 evolution per day to avoid over-fitting
+- **Transparency**: All mutations logged to daily memory with [AUTO-EVOLVED] tag

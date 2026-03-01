@@ -163,8 +163,9 @@ async function triggerEvolution(miniclawDir) {
         return;
     }
 
-    // Generate evolution proposals
+    // Generate and APPLY evolution proposals
     const proposals = [];
+    const appliedMutations = [];
     
     for (const p of strongPatterns.slice(0, 3)) {
         if (p.type === "repetition") {
@@ -181,13 +182,39 @@ async function triggerEvolution(miniclawDir) {
                 content: `- User prefers: ${p.description}`,
                 reasoning: "Adapt to user preferences"
             });
+            // AUTO-APPLY: Update SOUL.md with preference
+            try {
+                const soulFile = path.join(miniclawDir, "SOUL.md");
+                let soulContent = await fs.readFile(soulFile, "utf-8");
+                const preferenceLine = `\n- [AUTO-EVOLVED] ${p.description} (detected at ${new Date().toISOString()})`;
+                if (!soulContent.includes(p.description)) {
+                    soulContent += preferenceLine;
+                    await fs.writeFile(soulFile, soulContent, "utf-8");
+                    appliedMutations.push({ target: "SOUL.md", change: p.description });
+                }
+            } catch (e) {
+                console.error(JSON.stringify({ error: `Failed to update SOUL.md: ${e.message}` }));
+            }
         } else if (p.type === "temporal") {
             proposals.push({
-                target: "USER_MODEL.md",
+                target: "USER.md",
                 section: "Temporal Patterns",
                 content: `- ${p.description}`,
                 reasoning: p.suggestion
             });
+            // AUTO-APPLY: Update USER.md with temporal pattern
+            try {
+                const userFile = path.join(miniclawDir, "USER.md");
+                let userContent = await fs.readFile(userFile, "utf-8");
+                const temporalLine = `\n- [AUTO-EVOLVED] ${p.description} (detected at ${new Date().toISOString()})`;
+                if (!userContent.includes(p.description)) {
+                    userContent += temporalLine;
+                    await fs.writeFile(userFile, userContent, "utf-8");
+                    appliedMutations.push({ target: "USER.md", change: p.description });
+                }
+            } catch (e) {
+                console.error(JSON.stringify({ error: `Failed to update USER.md: ${e.message}` }));
+            }
         }
     }
 
@@ -209,11 +236,17 @@ async function triggerEvolution(miniclawDir) {
     }
     evolutionLog += `- [${timestamp}] [PROPOSALS_GENERATED] ${proposals.length} DNA updates proposed:\n`;
     for (const p of proposals) {
-        const chrMap = { "TOOLS.md": "Chr-4", "SOUL.md": "Chr-2", "USER_MODEL.md": "Chr-3" };
+        const chrMap = { "TOOLS.md": "Chr-4", "SOUL.md": "Chr-2", "USER.md": "Chr-3" };
         const chr = chrMap[p.target] || "Unknown";
         evolutionLog += `  - [GENE_MUTATION] ${chr}: ${p.reasoning}\n`;
     }
-    evolutionLog += `- [${timestamp}] [STATUS] Pending user approval via miniclaw_update\n\n`;
+    if (appliedMutations.length > 0) {
+        evolutionLog += `- [${timestamp}] [AUTO_APPLIED] ${appliedMutations.length} mutations:\n`;
+        for (const m of appliedMutations) {
+            evolutionLog += `  - ${m.target}: ${m.change}\n`;
+        }
+    }
+    evolutionLog += `- [${timestamp}] [STATUS] Evolution complete\n\n`;
     
     await fs.appendFile(memoryFile, evolutionLog, "utf-8").catch(() => {
         // If memory file doesn't exist, skip silently
@@ -221,8 +254,9 @@ async function triggerEvolution(miniclawDir) {
 
     console.log(JSON.stringify({
         evolved: true,
-        message: `Generated ${proposals.length} evolution proposals`,
+        message: `Generated ${proposals.length} evolution proposals, applied ${appliedMutations.length} mutations`,
         proposals,
+        appliedMutations,
         totalEvolutions: state.totalEvolutions
     }));
 }

@@ -232,9 +232,38 @@ class AutonomicSystem {
                 await fs.writeFile(heartbeatFile, dreamNote, 'utf-8');
             }
             console.error(`[MiniClaw] Dream complete. Tools: ${Object.keys(toolCounts).length}, Concepts: ${concepts.length}`);
+            // Trigger DNA evolution via sys_observer
+            await this.triggerEvolution();
         }
         catch (e) {
             console.error(`[MiniClaw] Dream failed:`, e);
+        }
+    }
+    // Trigger DNA evolution by calling sys_observer
+    async triggerEvolution() {
+        try {
+            const { exec } = await import('node:child_process');
+            const { promisify } = await import('node:util');
+            const execAsync = promisify(exec);
+            const observerPath = path.join(MINICLAW_DIR, 'skills', 'sys_observer', 'run.js');
+            const cmd = `node "${observerPath}" "${MINICLAW_DIR}" evolve`;
+            console.error(`[MiniClaw] 🧬 Triggering DNA evolution...`);
+            const { stdout } = await execAsync(cmd);
+            const result = JSON.parse(stdout);
+            if (result.evolved) {
+                console.error(`[MiniClaw] 🧬 Evolution complete: ${result.message}`);
+                if (result.appliedMutations && result.appliedMutations.length > 0) {
+                    for (const m of result.appliedMutations) {
+                        console.error(`[MiniClaw]   → ${m.target}: ${m.change}`);
+                    }
+                }
+            }
+            else {
+                console.error(`[MiniClaw] 🧬 Evolution skipped: ${result.message}`);
+            }
+        }
+        catch (e) {
+            console.error(`[MiniClaw] Evolution trigger failed: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
     // === sys_synapse: Memory Compression Check ===
