@@ -277,6 +277,7 @@ class AutonomicSystem {
     private lastDreamTime = 0;
     private readonly DREAM_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
     private readonly PULSE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+    private curiosityQueue: Array<{ type: string; target: string; reason: string }> = [];
 
     constructor(kernel: ContextKernel) {
         this.kernel = kernel;
@@ -289,7 +290,16 @@ class AutonomicSystem {
         this.timers.set('dream', this.safeInterval(() => this.checkDream(), 60 * 1000)); // Check every minute
         // Check scheduled jobs
         this.timers.set('jobs', this.safeInterval(() => this.checkScheduledJobs(), 60 * 1000)); // Check every minute
-        console.error('[MiniClaw] AutonomicSystem started (pulse, dream, jobs)');
+        // ★ Curiosity: Check for exploration opportunities every 10 minutes
+        this.timers.set('curiosity', this.safeInterval(() => this.checkCuriosity(), 10 * 60 * 1000));
+        console.error('[MiniClaw] AutonomicSystem started (pulse, dream, jobs, curiosity)');
+    }
+
+    // Get and clear curiosity queue (called by ContextKernel)
+    getCuriosityQueue(): Array<{ type: string; target: string; reason: string }> {
+        const queue = [...this.curiosityQueue];
+        this.curiosityQueue = [];
+        return queue;
     }
 
     // Safe interval wrapper that catches errors and prevents timer death
@@ -499,6 +509,68 @@ class AutonomicSystem {
         } catch (e) {
             console.error(`[MiniClaw] ScheduledJobs error: ${e instanceof Error ? e.message : String(e)}`);
         }
+    }
+
+    // === Curiosity System: Active Exploration ===
+    private async checkCuriosity(): Promise<void> {
+        try {
+            const urge = await this.evaluateCuriosityUrge();
+            if (urge.level > 0.6 && urge.suggestion) {
+                this.curiosityQueue.push({
+                    type: urge.type,
+                    target: urge.target,
+                    reason: urge.suggestion,
+                });
+                console.error(`[MiniClaw] 🤔 Curiosity triggered: ${urge.suggestion}`);
+            }
+        } catch (e) {
+            console.error(`[MiniClaw] Curiosity check error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
+    private async evaluateCuriosityUrge(): Promise<{ level: number; type: string; target: string; suggestion?: string }> {
+        const analytics = await this.kernel.getAnalytics();
+        const skills = await this.kernel.getSkillCount();
+        const tools = Object.keys(analytics.toolCalls);
+
+        // Curiosity type 1: Unused installed skills
+        if (skills > 0) {
+            const unusedSkills = skills - Object.keys(analytics.skillUsage || {}).length;
+            if (unusedSkills > 0) {
+                const level = Math.min(0.9, 0.4 + unusedSkills * 0.15);
+                return {
+                    level,
+                    type: 'unexplored_capability',
+                    target: 'skills',
+                    suggestion: `I have ${unusedSkills} unused skills. What can they do?`,
+                };
+            }
+        }
+
+        // Curiosity type 2: Tools never tried
+        const allTools = ['miniclaw_entity', 'miniclaw_skill', 'miniclaw_introspect'];
+        const untriedTools = allTools.filter(t => !tools.includes(t));
+        if (untriedTools.length > 0) {
+            return {
+                level: 0.5,
+                type: 'unexplored_tool',
+                target: untriedTools[0],
+                suggestion: `I've never tried ${untriedTools[0]}. Should I explore it?`,
+            };
+        }
+
+        // Curiosity type 3: Work pattern gaps
+        const fileChanges = Object.values(analytics.fileChanges || {});
+        if (fileChanges.length > 5) {
+            return {
+                level: 0.4,
+                type: 'pattern_gap',
+                target: 'workflow',
+                suggestion: 'I notice patterns in your work. Can I learn to anticipate your needs?',
+            };
+        }
+
+        return { level: 0, type: 'none', target: '' };
     }
 
     private cronMatchesNow(expr: string, now: Date, tz?: string): boolean {
@@ -1207,6 +1279,19 @@ export class ContextKernel {
                     priority: 8
                 });
             }
+        }
+
+        // ★ Curiosity Queue: Active exploration suggestions
+        const curiosityQueue = this.autonomicSystem.getCuriosityQueue();
+        if (curiosityQueue.length > 0) {
+            const curiosityContent = curiosityQueue
+                .map((c: { type: string; reason: string }) => `- **${c.type}**: ${c.reason}`)
+                .join('\n');
+            sections.push({
+                name: "CURIOSITY",
+                content: `\n---\n\n## 🤔 Curiosity (Active Exploration)\n> [!TIP]\n> I have some questions and exploration ideas. These are optional but may help me serve you better.\n\n${curiosityContent}\n`,
+                priority: 5
+            });
         }
 
         // ★ Priority 10: ACE Time Mode + Continuation
