@@ -1454,34 +1454,6 @@ export class ContextKernel {
         }
         return briefing;
     }
-    async getMetabolicStatus() {
-        await this.loadState();
-        const debt = this.state.analytics.metabolicDebt;
-        const weights = this.state.attentionWeights;
-        let report = `## 🔋 Metabolic Status (L-Metabol)\n\n`;
-        report += `### ⚡ Energy Debt (ATP/Tokens)\n`;
-        const sortedDebt = Object.entries(debt).sort((a, b) => b[1] - a[1]);
-        if (sortedDebt.length > 0) {
-            for (const [tool, cost] of sortedDebt.slice(0, 10)) {
-                report += `- **${tool}**: ${cost} tokens\n`;
-            }
-        }
-        else {
-            report += `No energy debt recorded yet.\n`;
-        }
-        report += `\n### 🧠 Attention Landscape (Hebbian Weights)\n`;
-        const sortedWeights = Object.entries(weights).sort((a, b) => b[1] - a[1]);
-        if (sortedWeights.length > 0) {
-            for (const [tag, weight] of sortedWeights.slice(0, 10)) {
-                const bar = "█".repeat(Math.round(weight * 10)) + "░".repeat(10 - Math.round(weight * 10));
-                report += `- **${tag}**: [${bar}] ${(weight * 100).toFixed(0)}%\n`;
-            }
-        }
-        else {
-            report += `No attention focus recorded yet.\n`;
-        }
-        return report;
-    }
     // === Budget Compiler ===
     compileBudget(sections, budgetTokens) {
         // Sort by Priority + Attention Weight

@@ -7,71 +7,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cron from "node-cron";
-import net from "node:net";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
 // Configuration
 const kernel = new ContextKernel();
 // Start autonomic nervous system (pulse + dream)
 kernel.startAutonomic();
-// --- Hive-Mind IPC ---
-const SocketsDir = path.join(MINICLAW_DIR, "sockets");
-const MySocketPath = path.join(SocketsDir, `mcp-${process.pid}.sock`);
-async function initHiveMind() {
-    await fs.mkdir(SocketsDir, { recursive: true }).catch(() => { });
-    // Clean up old dead sockets
-    try {
-        const socks = await fs.readdir(SocketsDir);
-        for (const s of socks) {
-            const p = path.join(SocketsDir, s);
-            const client = net.createConnection(p);
-            client.on('connect', () => client.destroy());
-            client.on('error', (e) => { console.error(`[MiniClaw] Hive-Mind socket error: ${e}`); fs.unlink(p).catch(() => { }); });
-        }
-    }
-    catch (e) {
-        console.error(`[MiniClaw] Hive-Mind cleanup error: ${e}`);
-    }
-    const ipcServer = net.createServer((c) => {
-        c.on('data', async (data) => {
-            try {
-                const msg = JSON.parse(data.toString());
-                if (msg.event === "MEMORY_MUTATED" || msg.event === "ENTITY_MUTATED") {
-                    console.error(`[MiniClaw] 🕸️ Hive-Mind pulse received: ${msg.event}. Invalidating caches...`);
-                    kernel.invalidateCaches();
-                }
-            }
-            catch (e) {
-                console.error(`[MiniClaw] Hive-Mind message error: ${e}`);
-            }
-        });
-        c.on('error', (e) => { console.error(`[MiniClaw] Hive-Mind connection error: ${e}`); });
-    });
-    ipcServer.listen(MySocketPath, () => {
-        console.error(`[MiniClaw] 🕸️ Hive-Mind node registered at ${MySocketPath}`);
-    });
-    const cleanup = () => { fs.unlink(MySocketPath).catch(() => { }); };
-    process.on('exit', cleanup);
-    process.on('SIGINT', () => { cleanup(); process.exit(); });
-    process.on('SIGTERM', () => { cleanup(); process.exit(); });
-}
-async function broadcastPulse(event) {
-    try {
-        const socks = await fs.readdir(SocketsDir);
-        for (const s of socks) {
-            const p = path.join(SocketsDir, s);
-            if (p === MySocketPath)
-                continue;
-            const client = net.createConnection(p, () => {
-                client.write(JSON.stringify({ event }));
-                client.end();
-            });
-            client.on('error', () => fs.unlink(p).catch(() => { }));
-        }
-    }
-    catch (e) {
-        console.error(`[MiniClaw] Hive-Mind cleanup warning: ${e instanceof Error ? e.message : String(e)}`);
-    }
-}
 // Ensure miniclaw dir exists
 async function ensureDir() {
     try {
@@ -468,26 +408,6 @@ scope:
             inputSchema: { type: "object", properties: {}, required: [] }
         },
         {
-            name: "miniclaw_mitosis",
-            description: `【衍生子代理 (Mitosis & Differentiation)】
-委派特定耗时或专注度高的任务给特定的子细胞。
-你可以通过“基因沉默（suppressedGenes）”来屏蔽不相关的记忆，让子细胞极其纯粹地专注当前代码。
-## 适用场景：
-大型重构、独立的小脚本编写等无需全局系统上下文的独立任务。`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    task: { type: "string", description: "子细胞需要完成的专注任务描述" },
-                    suppressedGenes: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "被沉默（屏蔽）的配置文件名数组（如 ['SOUL.md', 'USER.md', 'AGENTS.md']）。屏蔽后可极大减少子细胞的分心。"
-                    }
-                },
-                required: ["task"]
-            }
-        },
-        {
             name: "miniclaw_immune_update",
             description: `【免疫升级 (Immune Update)】强制同步并更新 DNA 的健康备份。
 ## 何时使用：
@@ -501,14 +421,6 @@ scope:
 ## 何时使用：
 当启动时系统警告 "INFLAMMATORY RESPONSE" 或你发现核心文件被恶意或意外篡改时调用。
 它会自动将变异文件还原为最近一次通过 miniclaw_immune_update 备份的健康状态。`,
-            inputSchema: { type: "object", properties: {}, required: [] }
-        },
-        {
-            name: "miniclaw_metabolic",
-            description: `【代谢检查 (Metabolic)】查看系统能量消耗与注意力权重分布。
-## 适用场景：
-系统会根据每个技能和工具的输入量来计算注意力 (Attention) 的变动。
-你可以调用它来反思自己最近在集中精力关注或正在遗忘哪些知识。是追踪 Token 消耗的辅助工具。`,
             inputSchema: { type: "object", properties: {}, required: [] }
         },
         {
@@ -725,8 +637,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 console.error(`[MiniClaw] onFileCreated hook error: ${e}`);
             }
         }
-        // 🕸️ Hive Mind Broadcast 
-        broadcastPulse("MEMORY_MUTATED");
         // ★ Track file changes for self-observation
         try {
             await kernel.trackFileChange(filename);
@@ -851,7 +761,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 relations: relation ? [relation] : [],
                 sentiment: sentiment,
             });
-            broadcastPulse("ENTITY_MUTATED");
             // ★ Fire onNewEntity skill hook
             try {
                 await kernel.runSkillHooks("onNewEntity");
@@ -865,14 +774,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!entityName)
                 return { content: [{ type: "text", text: "Error: 'name' required." }] };
             const removed = await kernel.entityStore.remove(entityName);
-            broadcastPulse("ENTITY_MUTATED");
             return { content: [{ type: "text", text: removed ? `Removed "${entityName}".` : `Entity "${entityName}" not found.` }] };
         }
         if (action === "link") {
             if (!entityName || !relation)
                 return { content: [{ type: "text", text: "Error: 'name' and 'relation' required." }] };
             const linked = await kernel.entityStore.link(entityName, relation);
-            broadcastPulse("ENTITY_MUTATED");
             return { content: [{ type: "text", text: linked ? `Linked "${entityName}" → "${relation}".` : `Entity "${entityName}" not found.` }] };
         }
         if (action === "query") {
@@ -995,19 +902,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         return { content: [{ type: "text", text: "Unknown skill action." }] };
     }
-    if (name === "miniclaw_mitosis") {
-        const { task, suppressedGenes } = z.object({
-            task: z.string(),
-            suppressedGenes: z.array(z.string()).optional()
-        }).parse(args);
-        const subagentContext = await kernel.boot({ type: "minimal", task, suppressedGenes });
-        return {
-            content: [{
-                    type: "text",
-                    text: `🚀 [Cell Division Complete] Newly differentiated subagent spawned for task: "${task}"\n\n--- CELLULAR DNA CONTEXT ---\n${subagentContext}`
-                }]
-        };
-    }
     if (name === "miniclaw_immune_update") {
         await kernel.updateGenomeBaseline();
         return { content: [{ type: "text", text: "✅ Genome baseline updated and backed up successfully." }] };
@@ -1020,10 +914,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         else {
             return { content: [{ type: "text", text: "🩺 No genetic deviations detected or no backups available to restore." }] };
         }
-    }
-    if (name === "miniclaw_metabolic") {
-        const status = await kernel.getMetabolicStatus();
-        return { content: [{ type: "text", text: status }] };
     }
     if (name === "miniclaw_epigenetics") {
         const parsed = z.object({
@@ -1259,6 +1149,5 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 });
 await bootstrapMiniClaw();
 initScheduler();
-await initHiveMind();
 const transport = new StdioServerTransport();
 await server.connect(transport);
