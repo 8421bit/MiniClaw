@@ -38,6 +38,13 @@ const TIME_MODES = {
 };
 const PAIN_DECAY_DAYS = 7; // Pain memory half-life (days)
 const PAIN_THRESHOLD = 0.3; // Minimum weight to trigger avoidance
+const DEFAULT_AFFECT = {
+    alertness: 0.3,
+    mood: 0.5,
+    curiosity: 0.5,
+    confidence: 0.7,
+    lastUpdate: new Date().toISOString(),
+};
 const DEFAULT_HEARTBEAT = {
     lastHeartbeat: null,
     lastDistill: null,
@@ -172,6 +179,15 @@ class AutonomicSystem {
                 vitals_hint: 'active',
             };
             await fs.writeFile(myPulse, JSON.stringify(pulseData, null, 2));
+            // ★ Affect Natural Recovery: emotions drift back to baseline over time
+            const affect = await this.kernel.getAffect();
+            const recoveryRate = 0.1; // 10% recovery per pulse (every 5 min)
+            await this.kernel.updateAffect({
+                alertness: affect.alertness + (DEFAULT_AFFECT.alertness - affect.alertness) * recoveryRate,
+                mood: affect.mood + (DEFAULT_AFFECT.mood - affect.mood) * recoveryRate,
+                curiosity: affect.curiosity + (DEFAULT_AFFECT.curiosity - affect.curiosity) * recoveryRate,
+                confidence: affect.confidence + (DEFAULT_AFFECT.confidence - affect.confidence) * recoveryRate,
+            });
             // Scan for others (silent, just log)
             const entries = await fs.readdir(pulseDir);
             const others = entries.filter(f => f.endsWith('.json') && f !== `${myId}.json`);
@@ -353,39 +369,53 @@ class AutonomicSystem {
         const analytics = await this.kernel.getAnalytics();
         const skills = await this.kernel.getSkillCount();
         const tools = Object.keys(analytics.toolCalls);
+        // ★ Get affect state to modulate curiosity
+        const affect = await this.kernel.getAffect();
+        // High alertness or low mood suppresses curiosity
+        const curiosityModifier = affect.alertness > 0.7 ? 0.3 :
+            affect.mood < -0.3 ? 0.5 : 1.0;
         // Curiosity type 1: Unused installed skills
         if (skills > 0) {
             const unusedSkills = skills - Object.keys(analytics.skillUsage || {}).length;
             if (unusedSkills > 0) {
-                const level = Math.min(0.9, 0.4 + unusedSkills * 0.15);
-                return {
-                    level,
-                    type: 'unexplored_capability',
-                    target: 'skills',
-                    suggestion: `I have ${unusedSkills} unused skills. What can they do?`,
-                };
+                const baseLevel = Math.min(0.9, 0.4 + unusedSkills * 0.15);
+                const level = baseLevel * curiosityModifier; // ★ Apply affect modulation
+                if (level > 0.5) { // Only trigger if still high enough after modulation
+                    return {
+                        level,
+                        type: 'unexplored_capability',
+                        target: 'skills',
+                        suggestion: `I have ${unusedSkills} unused skills. What can they do?`,
+                    };
+                }
             }
         }
         // Curiosity type 2: Tools never tried
         const allTools = ['miniclaw_entity', 'miniclaw_skill', 'miniclaw_introspect'];
         const untriedTools = allTools.filter(t => !tools.includes(t));
         if (untriedTools.length > 0) {
-            return {
-                level: 0.5,
-                type: 'unexplored_tool',
-                target: untriedTools[0],
-                suggestion: `I've never tried ${untriedTools[0]}. Should I explore it?`,
-            };
+            const level = 0.5 * curiosityModifier;
+            if (level > 0.4) {
+                return {
+                    level,
+                    type: 'unexplored_tool',
+                    target: untriedTools[0],
+                    suggestion: `I've never tried ${untriedTools[0]}. Should I explore it?`,
+                };
+            }
         }
         // Curiosity type 3: Work pattern gaps
         const fileChanges = Object.values(analytics.fileChanges || {});
         if (fileChanges.length > 5) {
-            return {
-                level: 0.4,
-                type: 'pattern_gap',
-                target: 'workflow',
-                suggestion: 'I notice patterns in your work. Can I learn to anticipate your needs?',
-            };
+            const level = 0.4 * curiosityModifier;
+            if (level > 0.3) {
+                return {
+                    level,
+                    type: 'pattern_gap',
+                    target: 'workflow',
+                    suggestion: 'I notice patterns in your work. Can I learn to anticipate your needs?',
+                };
+            }
         }
         return { level: 0, type: 'none', target: '' };
     }
@@ -577,6 +607,7 @@ export class ContextKernel {
         heartbeat: { ...DEFAULT_HEARTBEAT },
         attentionWeights: {},
         painMemory: [],
+        affect: { ...DEFAULT_AFFECT },
     };
     stateLoaded = false;
     budgetTokens;
@@ -699,6 +730,41 @@ export class ContextKernel {
     }
     // === Pain Memory (Nociception) ===
     // Records negative experiences to form protective instincts
+    // === Unified Affect State Management ===
+    async updateAffect(delta) {
+        await this.loadState();
+        // Blend new values with momentum (smooth transitions, not instant jumps)
+        const blend = (current, target, rate = 0.3) => current + (target - current) * rate;
+        if (delta.alertness !== undefined) {
+            this.state.affect.alertness = Math.max(0, Math.min(1, blend(this.state.affect.alertness, delta.alertness)));
+        }
+        if (delta.mood !== undefined) {
+            this.state.affect.mood = Math.max(-1, Math.min(1, blend(this.state.affect.mood, delta.mood)));
+        }
+        if (delta.curiosity !== undefined) {
+            this.state.affect.curiosity = Math.max(0, Math.min(1, blend(this.state.affect.curiosity, delta.curiosity)));
+        }
+        if (delta.confidence !== undefined) {
+            this.state.affect.confidence = Math.max(0, Math.min(1, blend(this.state.affect.confidence, delta.confidence)));
+        }
+        this.state.affect.lastUpdate = new Date().toISOString();
+        await this.saveState();
+    }
+    async getAffect() {
+        await this.loadState();
+        return { ...this.state.affect };
+    }
+    // Derive behavioral mode from affect state
+    getAffectMode(affect) {
+        if (affect.alertness > 0.7 && affect.mood < 0)
+            return 'cautious';
+        if (affect.curiosity > 0.6 && affect.mood > 0.3)
+            return 'explore';
+        if (affect.confidence > 0.5)
+            return 'execute';
+        return 'rest';
+    }
+    // === Pain Memory (Nociception) ===
     async recordPain(pain) {
         await this.loadState();
         const newPain = {
@@ -711,8 +777,17 @@ export class ContextKernel {
         if (this.state.painMemory.length > 50) {
             this.state.painMemory = this.state.painMemory.slice(-50);
         }
+        // ★ Pain affects emotional state
+        const affect = this.state.affect;
+        this.state.affect = {
+            alertness: Math.min(1, affect.alertness + pain.intensity * 0.3),
+            mood: Math.max(-1, affect.mood - pain.intensity * 0.2),
+            curiosity: Math.max(0, affect.curiosity - pain.intensity * 0.15), // Hurt → less curious
+            confidence: Math.max(0, affect.confidence - pain.intensity * 0.1),
+            lastUpdate: new Date().toISOString(),
+        };
         await this.saveState();
-        console.error(`[MiniClaw] 💢 Pain recorded: ${pain.action} in ${pain.context}`);
+        console.error(`[MiniClaw] 💢 Pain recorded: ${pain.action} (alertness↑ mood↓ curiosity↓)`);
     }
     // Check if there's pain memory for given context/action (with decay)
     async hasPainMemory(context, action) {
@@ -892,6 +967,7 @@ export class ContextKernel {
             previousHashes: {},
             attentionWeights: {},
             painMemory: [],
+            affect: { ...DEFAULT_AFFECT },
         };
         this.stashLoaded = false;
         this.stateLoaded = false;
@@ -1043,6 +1119,22 @@ export class ContextKernel {
                 priority: 5
             });
         }
+        // ★ Unified Affect State Display
+        const affect = await this.getAffect();
+        const affectMode = this.getAffectMode(affect);
+        const moodEmoji = affect.mood > 0.3 ? '😊' : affect.mood < -0.3 ? '😔' : '😐';
+        const alertEmoji = affect.alertness > 0.7 ? '⚠️' : '';
+        const modeLabels = {
+            explore: '🔍 Exploration Mode',
+            execute: '⚡ Execution Mode',
+            cautious: '🛡️ Cautious Mode',
+            rest: '💤 Rest Mode',
+        };
+        sections.push({
+            name: "AFFECT",
+            content: `\n---\n\n## ${moodEmoji} Emotional State ${alertEmoji}\n> Current: **${modeLabels[affectMode]}**\n\n| Metric | Value |\n|:--|:--|\n| Alertness | ${Math.round(affect.alertness * 100)}% |\n| Mood | ${affect.mood > 0 ? '+' : ''}${Math.round(affect.mood * 100)}% |\n| Curiosity | ${Math.round(affect.curiosity * 100)}% |\n| Confidence | ${Math.round(affect.confidence * 100)}% |\n`,
+            priority: 6
+        });
         // ★ Priority 10: ACE Time Mode + Continuation
         let aceContent = `## 🧠 Adaptive Context Engine\n`;
         aceContent += `${tmConfig.emoji} Mode: **${tmConfig.label}** (${hour}:${String(now.getMinutes()).padStart(2, '0')})\n`;
