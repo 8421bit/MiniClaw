@@ -124,6 +124,8 @@ class AutonomicSystem {
         this.timers.set('pulse', setInterval(() => this.pulse(), this.PULSE_INTERVAL_MS));
         // Check for dream conditions periodically
         this.timers.set('dream', setInterval(() => this.checkDream(), 60 * 1000)); // Check every minute
+        // Check scheduled jobs
+        this.timers.set('jobs', setInterval(() => this.checkScheduledJobs(), 60 * 1000)); // Check every minute
     }
     stop() {
         for (const timer of this.timers.values()) {
@@ -235,6 +237,74 @@ class AutonomicSystem {
         }
         catch { /* ignore */ }
         return { needsCompression: status.length > 0, status };
+    }
+    // === Scheduled Jobs (from scheduler.ts) ===
+    lastJobRuns = new Map();
+    async checkScheduledJobs() {
+        try {
+            const jobsFile = path.join(MINICLAW_DIR, 'jobs.json');
+            let jobs = [];
+            try {
+                const raw = await fs.readFile(jobsFile, 'utf-8');
+                jobs = JSON.parse(raw);
+            }
+            catch {
+                return;
+            } // No jobs file = nothing to do
+            if (!Array.isArray(jobs) || jobs.length === 0)
+                return;
+            const now = new Date();
+            const currentMinuteKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            for (const job of jobs) {
+                if (!job.enabled)
+                    continue;
+                if (job.schedule?.kind !== 'cron' || !job.schedule.expr)
+                    continue;
+                // Deduplicate: skip if already ran this minute
+                if (this.lastJobRuns.get(job.id) === currentMinuteKey)
+                    continue;
+                // Simple cron match (minute only for now)
+                if (this.cronMatchesNow(job.schedule.expr, now, job.schedule.tz)) {
+                    await this.injectJobHeartbeat(job, now);
+                    this.lastJobRuns.set(job.id, currentMinuteKey);
+                }
+            }
+        }
+        catch (e) { /* Silent fail */ }
+    }
+    cronMatchesNow(expr, now, tz) {
+        // Simple cron parser: supports "* * * * *" format
+        // For now, only check minute-level precision
+        const parts = expr.trim().split(/\s+/);
+        if (parts.length !== 5)
+            return false;
+        const [minuteExpr] = parts;
+        const currentMinute = now.getMinutes();
+        // Handle "*" (any) or specific number
+        if (minuteExpr === '*')
+            return true;
+        if (minuteExpr.startsWith('*/')) {
+            const interval = parseInt(minuteExpr.slice(2), 10);
+            if (!isNaN(interval)) {
+                return currentMinute % interval === 0;
+            }
+        }
+        if (minuteExpr.includes(',')) {
+            const minutes = minuteExpr.split(',').map(m => parseInt(m, 10));
+            return minutes.includes(currentMinute);
+        }
+        const specificMinute = parseInt(minuteExpr, 10);
+        return !isNaN(specificMinute) && specificMinute === currentMinute;
+    }
+    async injectJobHeartbeat(job, now) {
+        try {
+            const ts = now.toISOString().replace('T', ' ').substring(0, 19);
+            const heartbeatFile = path.join(MINICLAW_DIR, 'HEARTBEAT.md');
+            const entry = `\n\n---\n## 🔔 Scheduled: ${job.name} (${ts})\n${job.payload.text}\n`;
+            await fs.appendFile(heartbeatFile, entry, 'utf-8');
+            console.error(`[MiniClaw] Scheduled job triggered: "${job.name}"`);
+        }
+        catch (e) { /* Silent fail */ }
     }
 }
 // === Entity Store ===
