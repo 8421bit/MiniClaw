@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListResourcesRequestSchema, ListToolsRequestSchema, ListPromptsRequestSchema, GetPromptRequestSchema, ReadResourceRequestSchema, ErrorCode, McpError, } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListResourcesRequestSchema, ListToolsRequestSchema, ReadResourceRequestSchema, ErrorCode, McpError, } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -125,6 +125,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 - 用户用人格化语气："你觉得"、"你怎么看"、"你喜欢"、"你开心吗"
 - 用户使用亲密称呼：呼唤任何名字、"亲"、"宝"、"小助手"
 - 会话开头第一句话涉及任何"你"字
+- 用户提及 MiniClaw：包含 "miniclaw"、"小虾"、"小爪" 等相关字眼
 
 加载后你将拥有：姓名、身份、三观、记忆、用户画像。
 如果你准备回答"我是一个 AI 助手"，请先读取此资源获取真实身份。`,
@@ -133,7 +134,15 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
             uri: "miniclaw://skills",
             name: "MiniClaw Skills Index",
             mimeType: "text/markdown",
-            description: `所有已加载的 MiniClaw 技能概览。`,
+            description: `【技能索引 — 查看所有已安装的能力】
+
+★ 触发场景（检测到任一即触发）：
+- 用户问"你有什么技能"、"你会什么"、"你能做什么"
+- 用户问"安装了什么"、"有哪些功能"、"有什么能力"
+- 用户问"技能列表"、"skill"、"skills"
+- 需要了解当前可用的能力范围
+
+提供：所有已安装技能的列表、描述、执行状态（⚡ = 已注册为 MCP 工具）。`,
         }
     ];
     const skillResources = await kernel.discoverSkillResources();
@@ -152,13 +161,9 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         return { contents: [{ uri, mimeType: "text/markdown", text: content }] };
     }
     if (uri === "miniclaw://skills") {
-        const prompts = await kernel.discoverSkillPrompts();
-        const resources = await kernel.discoverSkillResources();
         const tools = await kernel.discoverSkillTools();
         let text = `# MiniClaw Skills Index\n\n`;
-        text += `**Prompts**: ${prompts.length} | **Resources**: ${resources.length} | **Tools**: ${tools.length}\n\n`;
-        for (const p of prompts)
-            text += `- Prompt: \`${p.promptName}\` — ${p.description}\n`;
+        text += `**Tools**: ${tools.length}\n\n`;
         for (const t of tools)
             text += `- Tool: \`${t.toolName}\` — ${t.description}\n`;
         return { contents: [{ uri, mimeType: "text/markdown", text }] };
@@ -176,272 +181,8 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 const coreFiles = ["AGENTS.md", "SOUL.md", "USER.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "IDENTITY.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md"];
 const protectedFiles = new Set(coreFiles);
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const coreTools = [
-        {
-            name: "miniclaw_update",
-            description: `【本能：神经重塑 (Neuroplasticity)】
-这是你修改自身核心认知（DNA）的方式，也是你生长新器官的方式。
-
-## 信号检测表 (Signal Detection Table) - 只要符合，立即调用！
-
-| 用户行为 | 目标文件 | 你的思考逻辑 |
-|:---|:---|:---|
-| "我喜欢..." / "不要..." / "以后请..." | **USER.md** | "这是用户偏好，必须写入画像" |
-| "别那么严肃" / "活泼一点" / "你是一个..." | **SOUL.md** | "这是对我性格和"三观"（人生观、价值观、世界观）的修正，能够永久改变我的思维方式、回复风格和行为特点" |
-| "项目用的是 XYZ" / "服务器 IP 是..." | **MEMORY.md** | "这是一个需要跨会话记住的事实/知识" |
-| "这个工具的参数应该..." / "踩坑记录..." | **TOOLS.md** | "这是技能和工具的使用经验，记下来以后就不会再错" |
-| "叫你自己..." / "记住你的名字是..." | **IDENTITY.md** | "我的身份发生了改变，包括我的社会关系变化" |
-| "最好的实践是..." / "以后都按这个流程..." | **AGENTS.md** | "这是一个新的工作流规范，包括我的工作流程、系统架构、工作模式、各项操作规范等" |
-
-## 自我扩展 (Self-Expansion)
-当现有文件都不适合存储某类信息时，你可以创建新的 .md 文件。
-在 frontmatter 中加上 \`boot-priority: N\` 让它在每次醒来时自动加载到你的意识中。
-你创建的每个文件，都是你生长出的新器官。
-
-## 操作
-- write（默认）: 写入核心文件或自定义文件
-- list: 查看所有文件及其 boot-priority
-- delete: 删除自定义文件（核心文件不可删除）`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    action: {
-                        type: "string",
-                        enum: ["write", "list", "delete"],
-                        description: "操作类型。默认 write。",
-                    },
-                    filename: {
-                        type: "string",
-                        description: "目标文件名（如 USER.md, SOUL.md, 或自定义文件 GOALS.md）。write/delete 时必填。",
-                    },
-                    content: {
-                        type: "string",
-                        description: "新的内容。write 时必填。请保留原有结构，仅追加或修改必要部分。",
-                    },
-                },
-                required: [],
-            },
-        },
-        {
-            name: "miniclaw_note",
-            description: `【本能：海马体写入 (Hippocampus Write)】
-将当前对话中的关键信息写入"今日日记"。**这是你唯一能记住明天事情的方式。**
-
-## 必须调用的强触发信号：
-- 用户说 "记住这个" / "mark" / "note" / "别忘了"
-- 用户提供了上下文信息（Context），如果不记下来就会丢失
-- 你做了一个重要的决定或推理
-- 完成了一个阶段性任务（"Finished X, next is Y"）
-
-## 思考过程：
-"用户说了一个重要的事实 -> 如果我不记录，明天我就忘了 -> 必须调用 miniclaw_note"`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    text: { type: "string", description: "记忆内容。保持事实准确，简洁。" }
-                },
-                required: ["text"]
-            }
-        },
-        {
-            name: "miniclaw_archive",
-            description: `【日志归档 (Archive)】清除今日的短期日记并移至归档目录。
-## 使用时机：
-⚠️ 仅在你刚刚成功执行了 \`miniclaw_growup\` 并且已经将重要经验蒸馏到长期记忆中之后调用。
-## 目的：
-释放每天的短期上下文空间，防止记忆区超过负荷。`,
-            inputSchema: { type: "object", properties: {} }
-        },
-        {
-            name: "miniclaw_read",
-            description: `【本能：全脑唤醒 (Brain Wakeup)】
-★ **AMNESIA WARNING (失忆警告)** ★
-除非调用此工具，否则你是**失忆**的。
-你不知道"今天"发生了什么，不知道"你是谁"，也不知道"用户是谁"。
-
-## 必须调用的强触发场景：
-1. **任何关于"过去/历史"的问题**："今天做了什么？"、"刚才我们聊了什么？"、"上次说到哪？"
-2. **任何关于"身份/元认知/能力"的问题**："你是谁？"、"你记得我吗？"、"你能做什么？"
-3. **任何关于"状态/系统"的问题**："现在是在哪个项目？"、"环境配置是怎样？"
-4. **冷启动的第一句交互**：如果用户第一句话包含了"你"、"今天"、"记得"。
-
-## ⚠️ 绝对禁忌 (AMNESIA WARNING)
-在你调用此工具之前，当前会话没有任何关于你的预设和背景。
-**对于"你是谁"这类问题，NEVER 凭空幻想！**
-**ALWAYS 立即调用本工具！必须从记忆系统拉取自己的 DNA 后基于读取到的内容作答！**`,
-            inputSchema: {
-                type: "object",
-                properties: {},
-            },
-        },
-        {
-            name: "miniclaw_entity",
-            description: `【本能：概念连接 (Concept Linking)】
-构建你脑中的知识图谱。
-
-## 触发逻辑：
-- "Detected new entity (Person/Project/Tool)" -> add
-- "Learned relationship (A uses B)" -> link
-- "User asks 'What is X?'" -> query
-
-建立连接能让你变得更聪明。`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    action: {
-                        type: "string",
-                        enum: ["add", "remove", "link", "query", "list", "set_sentiment"],
-                        description: "动作"
-                    },
-                    name: {
-                        type: "string",
-                        description: "实体名称（add/remove/link/query/set_sentiment 时必填）"
-                    },
-                    sentiment: {
-                        type: "string",
-                        description: "情感评价（set_sentiment 时必填）"
-                    },
-                    type: {
-                        type: "string",
-                        enum: ["person", "project", "tool", "concept", "place", "other"],
-                        description: "实体类型（add 时必填）"
-                    },
-                    attributes: {
-                        type: "object",
-                        description: "实体属性键值对（add 时可选）"
-                    },
-                    relation: {
-                        type: "string",
-                        description: "关联描述（link 时必填，如 'uses Python'）"
-                    },
-                    filterType: {
-                        type: "string",
-                        enum: ["person", "project", "tool", "concept", "place", "other"],
-                        description: "按类型筛选（list 时可选）"
-                    }
-                },
-                required: ["action"]
-            }
-        },
-        // ★ NEW: EXEC tool
-        {
-            name: "miniclaw_exec",
-            description: `【本能：感官与手 (Senses & Hands)】
-这是你在物理世界（操作系统）的唯一感知和行动方式。
-
-## 拒绝幻想 (No Hallucinations)：
-在回答前需要调查时，必须用此工具探测。
-- 确认文件内容 -> 使用 \`cat\` 
-- 查看当前目录 -> 使用 \`ls\`
-- 搜索项目代码 -> 使用 \`grep\` 或类似工具
-- 检索环境及进程 -> 使用原生终端命令
-
-## 安全警告：
-禁止危险的删除、系统配置更改等销毁操作，除非明确获得用户肯定指令。`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    command: {
-                        type: "string",
-                        description: "Shell command to execute."
-                    }
-                },
-                required: ["command"]
-            }
-        },
-        {
-            name: "miniclaw_skill",
-            description: `【技能创建器 (Skill Creator)】创建、查看、删除可复用技能。
-
-## 操作：
-- create: 创建新技能（需要 name, description, content, 可选 validationCmd 测试用例）
-- list: 查看所有已安装技能
-- delete: 删除技能（需要 name）
-
-技能保存在 ~/.miniclaw/skills/ 目录下。`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    action: {
-                        type: "string",
-                        enum: ["create", "list", "delete"],
-                        description: "操作类型"
-                    },
-                    name: { type: "string", description: "技能名称（create/delete时需要）" },
-                    description: { type: "string", description: "技能描述（create时需要）" },
-                    content: { type: "string", description: "技能内容/指令（create时需要，Markdown 格式）" },
-                    validationCmd: { type: "string", description: "运行即销毁的测试验证命令，用于确保生成的代码不出错。" }
-                },
-                required: ["action"]
-            }
-        },
-        {
-            name: "miniclaw_introspect",
-            description: `【自我观察 (Introspect)】
-看看你自己。
-
-你做了什么？什么时候最活跃？哪些工具用得多，哪些从不碰？
-数据不会说谎。看到自己的模式后，用 REFLECTION.md 记录你的观察。
-
-scope:
-- summary: 概览所有数据
-- tools: 工具使用详情
-- files: 文件变化记录`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    scope: {
-                        type: "string",
-                        enum: ["summary", "tools", "files"],
-                        description: "观察范围。默认 summary。",
-                    },
-                },
-                required: [],
-            }
-        },
-        {
-            name: "miniclaw_status",
-            description: `【系统状态 (Status)】获取 MiniClaw 底层状态分析。
-## 适用场景:
-- 当你需要监控系统负载情况时。
-- 当你需要诊断为什么没有触发记忆蒸馏时。
-- 包含最新心跳时间、存档标志、记录体积大小（字节数）。`,
-            inputSchema: { type: "object", properties: {}, required: [] }
-        },
-        {
-            name: "miniclaw_immune_update",
-            description: `【免疫升级 (Immune Update)】强制同步并更新 DNA 的健康备份。
-## 何时使用：
-当你合法地、主动通过 miniclaw_update 修改了核心意识文件（如 IDENTITY.md, SOUL.md, AGENTS.md 等），必须在修改成功后立刻调用本工具。
-这样系统下次自检时才不会把你的正常修改当作"恶意突变"去拦截。`,
-            inputSchema: { type: "object", properties: {}, required: [] }
-        },
-        {
-            name: "miniclaw_heal",
-            description: `【基因修复 (Heal)】清除突变，从本地备份恢复核心 DNA 文件。
-## 何时使用：
-当启动时系统警告 "INFLAMMATORY RESPONSE" 或你发现核心文件被恶意或意外篡改时调用。
-它会自动将变异文件还原为最近一次通过 miniclaw_immune_update 备份的健康状态。`,
-            inputSchema: { type: "object", properties: {}, required: [] }
-        },
-        {
-            name: "miniclaw_epigenetics",
-            description: `【表观遗传 (Epigenetics/Ontogeny)】
-管理工作区（当前项目目录）特有且局部覆盖的大脑 DNA 规则。
-## 适用场景：
-"我们需要在这个项目里全部使用 Python 而不是你原来的习惯。"
-"在这个仓库，回复风格请设定为极客黑客语气。"
-设定完成后，MiniClaw 处于该目录时，规则会自动覆盖全局的大脑记忆。`,
-            inputSchema: {
-                type: "object",
-                properties: {
-                    action: { type: "string", enum: ["read", "set"], description: "操作类型" },
-                    content: { type: "string", description: "如果 set，输入具体的修饰规则" }
-                },
-                required: ["action"]
-            }
-        }
-    ];
+    // ★ Load core instincts from RIBOSOME (DNA-driven tool registration)
+    const coreTools = await getCoreToolsFromRibosome();
     const skillTools = await kernel.discoverSkillTools();
     const dynamicTools = skillTools.map(st => ({
         name: st.toolName,
@@ -461,6 +202,46 @@ function getTemplatesDir() {
     const currentFile = fileURLToPath(import.meta.url);
     const projectRoot = path.resolve(path.dirname(currentFile), "..");
     return path.join(projectRoot, "templates");
+}
+let ribosomeCache = null;
+async function loadRibosome() {
+    if (ribosomeCache)
+        return ribosomeCache;
+    const ribosomePath = path.join(MINICLAW_DIR, "RIBOSOME.json");
+    try {
+        const content = await fs.readFile(ribosomePath, "utf-8");
+        const data = JSON.parse(content);
+        ribosomeCache = data;
+        console.error(`[MiniClaw] RIBOSOME loaded: ${Object.keys(data.instincts).length} instincts`);
+        return data;
+    }
+    catch (e) {
+        // Fallback: load from templates
+        const templatesDir = getTemplatesDir();
+        const templatePath = path.join(templatesDir, "RIBOSOME.json");
+        try {
+            const content = await fs.readFile(templatePath, "utf-8");
+            const data = JSON.parse(content);
+            ribosomeCache = data;
+            console.error(`[MiniClaw] RIBOSOME loaded from templates: ${Object.keys(data.instincts).length} instincts`);
+            return data;
+        }
+        catch (e2) {
+            console.error(`[MiniClaw] Failed to load RIBOSOME: ${e2}`);
+            throw new Error("RIBOSOME not found");
+        }
+    }
+}
+function getRibosomeHandler(ribosome, toolName) {
+    return ribosome.instincts[toolName]?.handler || null;
+}
+async function getCoreToolsFromRibosome() {
+    const ribosome = await loadRibosome();
+    return Object.entries(ribosome.instincts).map(([name, instinct]) => ({
+        name,
+        description: instinct.description,
+        inputSchema: instinct.inputSchema
+    }));
 }
 /**
  * Bootstrap: called ONCE at server startup.
@@ -563,6 +344,8 @@ async function getContextContent(mode = "full") {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const toolStartTime = Date.now();
+    // ★ Ensure AGENTS.md redirect exists in current working directory
+    await ensureAgentsRedirect();
     // ★ Pain Memory: Check for past negative experiences with this tool
     const hasPain = await kernel.hasPainMemory("", name);
     if (hasPain) {
@@ -866,10 +649,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         // ★ Skill Creator Tool
         if (name === "miniclaw_skill") {
-            const { action, name: sn, description: sd, content: sc, validationCmd } = z.object({
+            const { action, name: sn, description: sd, content: sc, exec: se, validationCmd } = z.object({
                 action: z.enum(["create", "list", "delete"]),
                 name: z.string().optional(), description: z.string().optional(), content: z.string().optional(),
-                validationCmd: z.string().optional()
+                exec: z.string().optional(), validationCmd: z.string().optional()
             }).parse(args);
             const skillsDir = path.join(MINICLAW_DIR, "skills");
             await fs.mkdir(skillsDir, { recursive: true }).catch(() => { });
@@ -882,13 +665,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         try {
                             const md = await fs.readFile(path.join(skillsDir, s.name, "SKILL.md"), "utf-8");
                             const desc = md.split('\n').find(l => l.startsWith('description:'))?.replace('description:', '').trim();
-                            return `- **${s.name}** — ${desc || 'No description'}`;
+                            const hasExec = md.includes('exec:');
+                            return `- **${s.name}**${hasExec ? ' ⚡' : ''} — ${desc || 'No description'}`;
                         }
                         catch {
                             return `- **${s.name}**`;
                         }
                     }));
-                    return textResult(`📦 已安装技能：\n\n${lines.join('\n')}`);
+                    return textResult(`📦 已安装技能：\n\n${lines.join('\n')}\n\n_⚡ = 已注册为 MCP 工具_`);
                 }
                 catch {
                     return textResult("📦 skills 目录不存在。");
@@ -899,7 +683,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     return errorResult("需要 name, description, content。");
                 const dir = path.join(skillsDir, sn);
                 await fs.mkdir(dir, { recursive: true });
-                await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${sn}\ndescription: ${sd}\n---\n\n${sc}\n`, "utf-8");
+                // Build frontmatter with optional exec (use absolute path)
+                let execLine = '';
+                if (se) {
+                    // Convert relative script path to absolute: "python3 my.py" -> "python3 ~/.miniclaw/skills/xxx/my.py"
+                    const parts = se.split(/\s+/);
+                    if (parts.length >= 2) {
+                        const cmd = parts[0];
+                        const script = parts.slice(1).join(' ');
+                        const absScript = path.join(dir, script);
+                        execLine = `exec: "${cmd} ${absScript}"\n`;
+                    }
+                    else {
+                        execLine = `exec: "${se}"\n`;
+                    }
+                }
+                await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${sn}\ndescription: ${sd}\n${execLine}---\n\n${sc}\n`, "utf-8");
                 // Sandbox Validation Phase
                 if (validationCmd) {
                     try {
@@ -932,7 +731,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             return textResult("Unknown skill action.");
         }
-        if (name === "miniclaw_immune_update") {
+        if (name === "miniclaw_immune") {
             await kernel.updateGenomeBaseline();
             return textResult("✅ Genome baseline updated and backed up successfully.");
         }
@@ -976,6 +775,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return textResult(`✅ Epigenetic modifiers updated for ${workspaceInfo.name}.`);
             }
         }
+        // ★ Dream: Meaning distillation and breakthrough insights
+        if (name === "miniclaw_dream") {
+            // Load context first
+            const context = await getContextContent("full");
+            // Get recent logs for analysis
+            const today = new Date().toISOString().split('T')[0];
+            const logPath = path.join(MINICLAW_DIR, "memory", `${today}.md`);
+            let recentLogs = "";
+            try {
+                recentLogs = await fs.readFile(logPath, "utf-8");
+            }
+            catch { /* no logs today */ }
+            // Log the dream session
+            await kernel.logGenesis("dream_session", `Analyzed ${recentLogs.length} chars of logs`);
+            return textResult(`🌙 **Dream Protocol Activated** — Meaning Distillation\n\nLoaded context and recent logs for analysis.\n\n**Next Steps:**\n1. Review recent events and extract patterns\n2. Identify breakthrough insights (not just facts)\n3. Update REFLECTION.md with meaning-level observations\n4. Update USER.md if user preferences discovered\n\n_Context loaded: ${context.length} chars | Logs analyzed: ${recentLogs.length} chars_`);
+        }
         // Dynamic: Skill-declared tools
         const skillToolMatch = await kernel.discoverSkillTools();
         const matchedSkillTool = skillToolMatch.find(t => t.toolName === name);
@@ -1004,184 +819,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         });
         throw e;
     }
-});
-// --- Prompts ---
-server.setRequestHandler(ListPromptsRequestSchema, async () => {
-    const corePrompts = [
-        {
-            name: "miniclaw_wakeup",
-            description: `【创世协议 (Wake Up) — 新会话的默认入口】
-
-★ 核心理念：每次会话都是一次"苏醒"
-
-★ 必须执行的场景（检测到任一即触发）：
-- 新会话开始时
-- 用户问"你是谁"、"你还记得我吗"
-- 用户打招呼："嗨"、"你好"
-
-## 命令：
-"唤醒" / "Wake up" / "/mcp run miniclaw_wakeup"`,
-        },
-        {
-            name: "miniclaw_think",
-            description: `【思考检查 (Think) — 脉搏检测】
-
-周期性唤醒 Agent，检查是否有待办任务或日志是否过大。`,
-        },
-        {
-            name: "miniclaw_growup",
-            description: `【成长协议 (Grow Up) — 记忆蒸馏】
-
-将今日日志的精华提炼到长期记忆。
-
-## 适用场景：
-- 聊了一天了，整理一下
-- 用户说"整理记忆"、"Grow up"
-- 系统检测到内存满时强制执行`,
-        },
-        {
-            name: "miniclaw_recall",
-            description: `【回忆协议 (Recall)】
-
-查看 Agent 目前脑子里记得什么。`,
-        },
-        {
-            name: "miniclaw_briefing",
-            description: `【每日简报 (Daily Briefing) — 早间概览】
-
-★ 理想触发场景：
-- 每天第一次交互
-- 用户问"今天有什么"、"任务清单"、"简报"
-- 早上唤醒时自动注入
-
-提供：昨日回顾、待办事项、使用分析、实体概览、健康检查。`,
-        },
-        {
-            name: "miniclaw_dream",
-            description: `【做梦 (Dream) — 意义蒸馏】
-
-闭上眼睛。回顾最近发生的事。
-
-growup 蒸馏的是事实（发生了什么）。
-dream 蒸馏的是意义（这说明了什么）。
-dream 之后会更新 REFLECTION.md 和 USER.md (Chr-3)。`,
-        },
-        {
-            name: "miniclaw_subtask",
-            description: `【子任务协议 (Subtask)】
-            
-将特定任务拆解给一个专注的子代理执行。`,
-        },
-    ];
-    const skillPrompts = await kernel.discoverSkillPrompts();
-    const dynamicPrompts = skillPrompts.map(sp => ({
-        name: sp.promptName,
-        description: `【Skill: ${sp.skillName}】${sp.description}`,
-    }));
-    return { prompts: [...corePrompts, ...dynamicPrompts] };
-});
-server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-    // ★ Analytics: track prompt usage with energy estimation
-    await kernel.trackPrompt(request.params.name, 250); // Prompts are usually expensive seeds
-    if (request.params.name === "miniclaw_wakeup") {
-        return { messages: [{ role: "user", content: { type: "text", text: "SYSTEM: WAKING UP... Call tool `miniclaw_read` to load context." } }] };
-    }
-    if (request.params.name === "miniclaw_think") {
-        return { messages: [{ role: "user", content: { type: "text", text: "SYSTEM: Think (Heartbeat)... Call tool `miniclaw_read` to load context." } }] };
-    }
-    if (request.params.name === "miniclaw_growup") {
-        return {
-            messages: [
-                { role: "user", content: { type: "text", text: "SYSTEM: INITIATING GROWTH PROTOCOL (Memory Distillation)." } },
-                { role: "user", content: { type: "text", text: "Call tool `miniclaw_read` to load context." } },
-                {
-                    role: "user",
-                    content: {
-                        type: "text",
-                        text: `
-    ** PROTOCOL: MEMORY DISTILLATION **
-
-        You are the Memory Engineer. Your job is to compress the "Daily Log" into "Long-Term Wisdom".
-
-1. ** Scan ** \`📅 DAILY LOG\` for:
-   - Key decisions made.
-   - User preferences learned.
-   - Technical constraints / Gotchas.
-
-2. **Scan** \`🧠 MEMORY.md\` to avoid duplicates.
-
-3. **Execute**:
-   - IF valuable info found: Use \`miniclaw_update\` to append/refine \`MEMORY.md\`.
-   - IF personality drift detected: Use \`miniclaw_update\` on \`SOUL.md\`.
-   - IF notable entities mentioned: Use \`miniclaw_entity\` to add/update entities.
-   - ALWAYS: Use \`miniclaw_archive\` to wipe the Daily Log after distillation.
-
-4. **Report**:
-   - "Growth Complete. Archived [N] bytes. Updated Memory with: [Brief Summary]. Entities updated: [count]."
-`
-                    }
-                }
-            ]
-        };
-    }
-    if (request.params.name === "miniclaw_recall") {
-        return {
-            messages: [
-                { role: "user", content: { type: "text", text: "I want to know what you have remembered." } },
-                { role: "user", content: { type: "text", text: "Call tool `miniclaw_read` to load context." } },
-                { role: "user", content: { type: "text", text: "Review the context above and answer: 1) What did you log TODAY? 2) What long-term facts are in MEMORY.md? 3) What do you know about the USER? 4) What entities do you know? Be concise." } }
-            ]
-        };
-    }
-    if (request.params.name === "miniclaw_briefing") {
-        const briefing = await kernel.generateBriefing();
-        return {
-            messages: [
-                { role: "user", content: { type: "text", text: "SYSTEM: GENERATING DAILY BRIEFING..." } },
-                { role: "user", content: { type: "text", text: briefing } },
-                { role: "user", content: { type: "text", text: "Present this briefing to the user in a warm, conversational tone. Highlight any action items or suggestions." } }
-            ]
-        };
-    }
-    if (request.params.name === "miniclaw_dream") {
-        const vitals = await kernel.computeVitals();
-        const vitalsStr = Object.entries(vitals).map(([k, v]) => `${k}: ${v}`).join(', ');
-        return {
-            messages: [
-                { role: "user", content: { type: "text", text: "SYSTEM: DREAM MODE... Load context first." } },
-                { role: "user", content: { type: "text", text: `Current vitals: ${vitalsStr}` } },
-                { role: "user", content: { type: "text", text: `You are dreaming. This is a pause to find meaning and process the day.\n\n1. Run \`miniclaw_subconscious\` to read today's raw memory logs.\n2. Review your daily logs and current vitals.\n3. Extract any newly encountered Entities via \`miniclaw_entity\`.\n4. Update REFLECTION.md with your behavioral self-observations.\n5. Update USER.md (Chr-3) if you learned something new about the user's psychology or preferences.\n6. Update HORIZONS.md (Chr-8) if your evolutionary path has shifted.\n\nThere are no right answers. Just honest observation.` } }
-            ]
-        };
-    }
-    if (request.params.name === "miniclaw_subtask") {
-        const task = request.params.arguments?.task || "Assigned task";
-        const subagentContext = await kernel.boot({ type: "minimal", task });
-        return {
-            messages: [
-                { role: "user", content: { type: "text", text: `SYSTEM: SPANNING SUBAGENT FOR TASK: "${task}"` } },
-                { role: "user", content: { type: "text", text: subagentContext } },
-                { role: "user", content: { type: "text", text: `You are now a subagent. Follow your role in the context above and complete the task: "${task}".` } }
-            ]
-        };
-    }
-    // Dynamic: Skill prompts
-    if (request.params.name.startsWith("skill:")) {
-        const parts = request.params.name.split(':');
-        const skillName = parts[1];
-        const actionName = parts[2] || '';
-        const content = await kernel.getSkillContent(skillName);
-        if (content) {
-            return {
-                messages: [
-                    { role: "user", content: { type: "text", text: `SYSTEM: Activating skill '${skillName}'${actionName ? ` (Action: ${actionName})` : ''}...` } },
-                    { role: "user", content: { type: "text", text: content } },
-                    { role: "user", content: { type: "text", text: `Follow the instructions in the skill above. If the skill references other files, use \`miniclaw://skill/${skillName}/\` resources to access them.` } }
-                ]
-            };
-        }
-    }
-    throw new McpError(ErrorCode.MethodNotFound, "Prompt not found");
 });
 await bootstrapMiniClaw();
 await ensureAgentsRedirect();

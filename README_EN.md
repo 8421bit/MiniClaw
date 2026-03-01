@@ -30,7 +30,7 @@ Unlike heavy chatbots that act as separate applications, MiniClaw is a **parasit
 ## 🚀 Zero-Install Quick Start
 
 You don't need to clone this repo or install complex dependencies manually.
-Just add this to your **Claude Desktop**, **Qoderwork**, or **OpenClaw** MCP config:
+Just add this to your **Claude CoWork**, **Qoderwork**, or **WorkBuddy** MCP config:
 
 ```json
 {
@@ -104,7 +104,41 @@ MiniClaw follows a **Micro-Kernel Architecture** (~2,400 LOC), avoiding the bloa
 |-------|-----------|----------------|
 | **Kernel** | `src/kernel.ts` | The Brain. Handles ACE, Memory Graph, Skill Loading, and Execution Sandbox. |
 | **Interface** | `src/index.ts` | The Body. Implements MCP Protocol, Tool Dispatch, and Heartbeat. |
-| **DNA** | `templates/*.md` | The Personality. Definable traits for Identity, Constitution, and Bootstrap. |
+| **DNA** | `templates/*.md` | The Genome. Defines personality, growth drive, genesis memory, and bootstrap protocols. |
+
+### Architecture Layering Principle
+
+| Belonging | Capability Type | Examples |
+|:----------|:----------------|:---------|
+| **Core** | Innate instincts, non-removable | DNA evolution, pattern detection, ACE engine |
+| **Skills** | Installable/uninstallable extensions | User-defined skills, third-party plugins |
+
+> **Principle**: Living beings "naturally learn and adapt," so DNA evolution is a **core mechanism**, not an optional skill.
+
+---
+
+## 🧬 DNA Chromosome Map
+
+The `templates/` directory contains the complete digital life genome. Each file corresponds to a specific organ or functional system:
+
+| File | Biological Metaphor | Function Description |
+|:-----|:--------------------|:---------------------|
+| **RIBOSOME.json** | Ribosome | The molecular machine that synthesizes proteins (tools). Defines 13 core instinct tools and their trigger signals. |
+| **IDENTITY.md** | Genome (Chr-0) | Species origin and identity. Contains name, version, genesis protocol, and five-stage evolution milestones. |
+| **SOUL.md** | Soul Chromosome (Chr-1) | Rewritable DNA for personality and worldview. Defines response style, emotional expression, and core values. |
+| **AGENTS.md** | Neural Pathways (Chr-2) | Workflow specifications and decision logic. Contains signal detection tables and tool invocation strategies. |
+| **USER.md** | Symbiotic Chromosome (Chr-3) | User profile and preference memory. Records user habits, preferences, and anti-patterns. |
+| **MEMORY.md** | Hippocampus (Chr-4) | Factual knowledge storage. Project info, tech stack, server configurations, and other objective data. |
+| **TOOLS.md** | Tool Memory (Chr-5) | Skill usage experience and pitfall records. Tool parameter specifications and best practices. |
+| **REFLECTION.md** | Reflection Dimension (Chr-6) | Periodic self-reflection records. Behavioral pattern analysis and growth insights. |
+| **CONCEPTS.md** | Concept Graph (Chr-7) | Knowledge organization and entity relationships. Definitions and associations of domain concepts. |
+| **HEARTBEAT.md** | Pulse System | Scheduled task scheduling and life rhythm. AutonomicSystem heartbeat detection. |
+| **BOOTSTRAP.md** | Embryonic Development | First-boot initialization protocol. Directory structure creation and template copying logic. |
+| **HORIZONS.md** | Evolution Blueprint | Long-term development roadmap. Records technologies to explore and future capability expansions. |
+| **SUBAGENT.md** | Cell Differentiation | Sub-agent creation specifications. Task decomposition and focused execution protocol definitions. |
+| **jobs.json** | Biological Clock | Scheduled task configuration. Cron-format periodic task scheduling table. |
+
+> **💡 Memory Principle**: After each conversation, MiniClaw writes key information to the corresponding chromosome file. On next startup, it loads all DNA via `miniclaw_read` to achieve "whole-brain wakeup."
 
 ---
 

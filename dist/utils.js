@@ -38,16 +38,6 @@ export function cronMatchesNow(expr, now) {
         matchCronField(f[2], now.getDate(), 31) && matchCronField(f[3], now.getMonth() + 1, 12) &&
         matchCronField(f[4], now.getDay(), 6);
 }
-export function getNowInTz(tz) {
-    if (!tz)
-        return new Date();
-    try {
-        return new Date(new Date().toLocaleString("en-US", { timeZone: tz }));
-    }
-    catch {
-        return new Date();
-    }
-}
 // ─── Frontmatter ─────────────────────────────────────────────────────────────
 export function parseFrontmatter(content) {
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
@@ -123,40 +113,8 @@ export async function atomicWrite(filePath, data) {
     await fs.writeFile(tmp, data, "utf-8");
     await fs.rename(tmp, filePath);
 }
-/** Sleep utility for retry delays */
-export function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-/** Safe write with retry logic and exponential backoff */
-export async function safeWrite(filePath, data, retries = 3) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            await atomicWrite(filePath, data);
-            return;
-        }
-        catch (e) {
-            if (i === retries - 1)
-                throw e;
-            const delay = 100 * Math.pow(2, i); // Exponential backoff: 100ms, 200ms, 400ms
-            console.error(`[MiniClaw] Write retry ${i + 1}/${retries} for ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
-            await sleep(delay);
-        }
-    }
-}
 export function hashString(s) {
     return crypto.createHash("md5").update(s).digest("hex");
-}
-// ─── Search ──────────────────────────────────────────────────────────────────
-/** Simple keyword-based relevance scoring (0-100). */
-export function fuzzyScore(line, query) {
-    const lo = line.toLowerCase(), qo = query.toLowerCase();
-    if (lo.includes(qo))
-        return 100;
-    const kws = qo.split(/\s+/).filter(w => w.length > 1);
-    if (!kws.length)
-        return 0;
-    const matched = kws.filter(k => lo.includes(k)).length;
-    return matched ? Math.round((matched / kws.length) * 80) : 0;
 }
 // ─── MCP Response Helpers ────────────────────────────────────────────────────
 /** Standard MCP text response (eliminates 49+ repetitions) */

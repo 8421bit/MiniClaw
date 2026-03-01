@@ -14,9 +14,7 @@ const SKILLS_DIR = path.join(MINICLAW_DIR, "skills");
 const MEMORY_DIR = path.join(MINICLAW_DIR, "memory");
 const PULSE_DIR = path.join(MINICLAW_DIR, "pulse");
 const STATE_FILE = path.join(MINICLAW_DIR, "state.json");
-const STASH_FILE = path.join(MINICLAW_DIR, "STASH.json");
 const ENTITIES_FILE = path.join(MINICLAW_DIR, "entities.json");
-export const CONFIG_FILE = path.join(MINICLAW_DIR, "miniclaw.config.json");
 // Internal templates directory (within the package)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -119,7 +117,7 @@ class SkillCache {
         this.lastScanTime = Date.now();
     }
 }
-// === Autonomic Nervous System (内化的自动系统) ===
+// === Autonomic Nervous System ===
 class AutonomicSystem {
     kernel;
     timers = new Map();
@@ -291,28 +289,6 @@ class AutonomicSystem {
             console.error(`[MiniClaw] Evolution trigger failed: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
-    // === sys_synapse: Memory Compression Check ===
-    async checkSynapse() {
-        let status = '';
-        const memoryPath = path.join(MINICLAW_DIR, 'MEMORY.md');
-        const conceptsPath = path.join(MINICLAW_DIR, 'CONCEPTS.md');
-        try {
-            const stats = await fs.stat(memoryPath);
-            if (stats.size > 5000) {
-                status += `\n- MEMORY.md is large (${stats.size} chars). Consider distilling old history.`;
-            }
-        }
-        catch { /* ignore */ }
-        try {
-            const stats = await fs.stat(conceptsPath);
-            if (stats.size > 3000) {
-                status += `\n- CONCEPTS.md is dense (${stats.size} chars). Suggest hierarchical grouping.`;
-            }
-        }
-        catch { /* ignore */ }
-        return { needsCompression: status.length > 0, status };
-    }
-    // === Scheduled Jobs (from scheduler.ts) ===
     lastJobRuns = new Map();
     async checkScheduledJobs() {
         try {
@@ -348,7 +324,6 @@ class AutonomicSystem {
             console.error(`[MiniClaw] ScheduledJobs error: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
-    // === Curiosity System: Active Exploration ===
     async checkCuriosity() {
         try {
             const urge = await this.evaluateCuriosityUrge();
@@ -597,7 +572,7 @@ export class ContextKernel {
     bootErrors = [];
     state = {
         analytics: {
-            toolCalls: {}, promptsUsed: {}, bootCount: 0,
+            toolCalls: {}, bootCount: 0,
             totalBootMs: 0, lastActivity: "", skillUsage: {},
             dailyDistillations: 0,
             activeHours: new Array(24).fill(0), fileChanges: {},
@@ -622,10 +597,6 @@ export class ContextKernel {
     startAutonomic() {
         this.autonomicSystem.start();
         console.error('[MiniClaw] Autonomic nervous system started (pulse + dream)');
-    }
-    // Check memory compression needs (synapse)
-    async checkMemoryCompression() {
-        return this.autonomicSystem.checkSynapse();
     }
     // --- State Persistence ---
     async loadState() {
@@ -678,28 +649,23 @@ export class ContextKernel {
     async trackTool(toolName, energyEstimate) {
         await this.loadState();
         this.state.analytics.toolCalls[toolName] = (this.state.analytics.toolCalls[toolName] || 0) + 1;
-        // Metabolic Cost (Energy ATP)
         if (energyEstimate) {
             this.state.analytics.metabolicDebt[toolName] = (this.state.analytics.metabolicDebt[toolName] || 0) + energyEstimate;
         }
         this.state.analytics.lastActivity = new Date().toISOString();
-        // ★ Track active hours for self-observation
         const hour = new Date().getHours();
         if (!this.state.analytics.activeHours || this.state.analytics.activeHours.length !== 24) {
             this.state.analytics.activeHours = new Array(24).fill(0);
         }
         this.state.analytics.activeHours[hour] = (this.state.analytics.activeHours[hour] || 0) + 1;
-        // Boost attention to the tool and its associated skill
+        // Boost attention (inline to avoid extra load/save cycles)
+        const boost = (tag, amount = 0.1) => {
+            this.state.attentionWeights[tag] = Math.min(1.0, (this.state.attentionWeights[tag] || 0) + amount);
+        };
         const skillName = toolName.startsWith('skill_') ? toolName.split('_')[1] : null;
         if (skillName)
-            await this.boostAttention(`skill:${skillName}`);
-        await this.boostAttention(toolName);
-        await this.saveState();
-    }
-    async boostAttention(tag, amount = 0.1) {
-        await this.loadState();
-        const current = this.state.attentionWeights[tag] || 0;
-        this.state.attentionWeights[tag] = Math.min(1.0, current + amount);
+            boost(`skill:${skillName}`);
+        boost(toolName);
         await this.saveState();
     }
     decayAttention() {
@@ -709,13 +675,6 @@ export class ContextKernel {
             if (this.state.attentionWeights[tag] < 0.01)
                 delete this.state.attentionWeights[tag];
         }
-    }
-    async trackPrompt(promptName, energyEstimate = 200) {
-        await this.loadState();
-        this.state.analytics.promptsUsed[promptName] = (this.state.analytics.promptsUsed[promptName] || 0) + 1;
-        this.state.analytics.metabolicDebt[promptName] = (this.state.analytics.metabolicDebt[promptName] || 0) + energyEstimate;
-        this.boostAttention(promptName);
-        await this.saveState();
     }
     async getAnalytics() {
         await this.loadState();
@@ -728,41 +687,26 @@ export class ContextKernel {
         this.state.analytics.fileChanges[filename] = (this.state.analytics.fileChanges[filename] || 0) + 1;
         await this.saveState();
     }
-    // === Pain Memory (Nociception) ===
-    // Records negative experiences to form protective instincts
-    // === Unified Affect State Management ===
+    // === Affect & Pain Management ===
     async updateAffect(delta) {
         await this.loadState();
-        // Blend new values with momentum (smooth transitions, not instant jumps)
-        const blend = (current, target, rate = 0.3) => current + (target - current) * rate;
-        if (delta.alertness !== undefined) {
-            this.state.affect.alertness = Math.max(0, Math.min(1, blend(this.state.affect.alertness, delta.alertness)));
-        }
-        if (delta.mood !== undefined) {
-            this.state.affect.mood = Math.max(-1, Math.min(1, blend(this.state.affect.mood, delta.mood)));
-        }
-        if (delta.curiosity !== undefined) {
-            this.state.affect.curiosity = Math.max(0, Math.min(1, blend(this.state.affect.curiosity, delta.curiosity)));
-        }
-        if (delta.confidence !== undefined) {
-            this.state.affect.confidence = Math.max(0, Math.min(1, blend(this.state.affect.confidence, delta.confidence)));
-        }
+        const blend = (c, t, r = 0.3) => c + (t - c) * r;
+        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+        const { alertness, mood, curiosity, confidence } = delta;
+        if (alertness !== undefined)
+            this.state.affect.alertness = clamp(blend(this.state.affect.alertness, alertness), 0, 1);
+        if (mood !== undefined)
+            this.state.affect.mood = clamp(blend(this.state.affect.mood, mood), -1, 1);
+        if (curiosity !== undefined)
+            this.state.affect.curiosity = clamp(blend(this.state.affect.curiosity, curiosity), 0, 1);
+        if (confidence !== undefined)
+            this.state.affect.confidence = clamp(blend(this.state.affect.confidence, confidence), 0, 1);
         this.state.affect.lastUpdate = new Date().toISOString();
         await this.saveState();
     }
     async getAffect() {
         await this.loadState();
         return { ...this.state.affect };
-    }
-    // Derive behavioral mode from affect state
-    getAffectMode(affect) {
-        if (affect.alertness > 0.7 && affect.mood < 0)
-            return 'cautious';
-        if (affect.curiosity > 0.6 && affect.mood > 0.3)
-            return 'explore';
-        if (affect.confidence > 0.5)
-            return 'execute';
-        return 'rest';
     }
     // === Pain Memory (Nociception) ===
     async recordPain(pain) {
@@ -949,14 +893,12 @@ export class ContextKernel {
      * - ACE (Time, Continuation)
      * - Workspace Auto-Detection (Project, Git, Files)
      */
-    stashStr = null;
-    stashLoaded = false;
     invalidateCaches() {
         this.skillCache.invalidate();
         this.entityStore.invalidate();
         this.state = {
             analytics: {
-                toolCalls: {}, promptsUsed: {}, bootCount: 0,
+                toolCalls: {}, bootCount: 0,
                 totalBootMs: 0, lastActivity: "", skillUsage: {},
                 dailyDistillations: 0,
                 activeHours: new Array(24).fill(0),
@@ -969,39 +911,7 @@ export class ContextKernel {
             painMemory: [],
             affect: { ...DEFAULT_AFFECT },
         };
-        this.stashLoaded = false;
         this.stateLoaded = false;
-    }
-    // Health check for monitoring system status
-    healthCheck() {
-        const issues = [];
-        const metrics = {};
-        // Check autonomic system
-        const autonomicRunning = this.autonomicSystem ? true : false;
-        metrics.autonomicRunning = autonomicRunning ? 1 : 0;
-        if (!autonomicRunning) {
-            issues.push('AutonomicSystem not running');
-        }
-        // Check entity count
-        metrics.entityCount = this.entityStore ? this.entityStore.entities?.length || 0 : 0;
-        if (metrics.entityCount > 900) {
-            issues.push(`Entity count approaching limit: ${metrics.entityCount}/1000`);
-        }
-        // Check boot errors
-        metrics.bootErrors = this.bootErrors.length;
-        if (this.bootErrors.length > 0) {
-            issues.push(`Boot had ${this.bootErrors.length} errors`);
-        }
-        // Check state loaded
-        metrics.stateLoaded = this.stateLoaded ? 1 : 0;
-        if (!this.stateLoaded) {
-            issues.push('State not loaded');
-        }
-        return {
-            status: issues.length === 0 ? 'healthy' : 'degraded',
-            issues,
-            metrics
-        };
     }
     async boot(mode = { type: "full" }) {
         this.bootErrors = [];
@@ -1121,15 +1031,12 @@ export class ContextKernel {
         }
         // ★ Unified Affect State Display
         const affect = await this.getAffect();
-        const affectMode = this.getAffectMode(affect);
+        const affectMode = affect.alertness > 0.7 && affect.mood < 0 ? 'cautious' :
+            affect.curiosity > 0.6 && affect.mood > 0.3 ? 'explore' :
+                affect.confidence > 0.5 ? 'execute' : 'rest';
         const moodEmoji = affect.mood > 0.3 ? '😊' : affect.mood < -0.3 ? '😔' : '😐';
         const alertEmoji = affect.alertness > 0.7 ? '⚠️' : '';
-        const modeLabels = {
-            explore: '🔍 Exploration Mode',
-            execute: '⚡ Execution Mode',
-            cautious: '🛡️ Cautious Mode',
-            rest: '💤 Rest Mode',
-        };
+        const modeLabels = { explore: '🔍 Exploration Mode', execute: '⚡ Execution Mode', cautious: '🛡️ Cautious Mode', rest: '💤 Rest Mode' };
         sections.push({
             name: "AFFECT",
             content: `\n---\n\n## ${moodEmoji} Emotional State ${alertEmoji}\n> Current: **${modeLabels[affectMode]}**\n\n| Metric | Value |\n|:--|:--|\n| Alertness | ${Math.round(affect.alertness * 100)}% |\n| Mood | ${affect.mood > 0 ? '+' : ''}${Math.round(affect.mood * 100)}% |\n| Curiosity | ${Math.round(affect.curiosity * 100)}% |\n| Confidence | ${Math.round(affect.confidence * 100)}% |\n`,
@@ -2089,14 +1996,6 @@ export class ContextKernel {
         await this.syncBuiltInTemplates();
     }
     // === Public API: Skill Discovery ===
-    async discoverSkillPrompts() {
-        const allPrompts = [];
-        const skills = await this.skillCache.getAll();
-        for (const [, skill] of skills) {
-            allPrompts.push(...this.parseSkillPromptEntries(skill.frontmatter, skill.name));
-        }
-        return allPrompts;
-    }
     async discoverSkillResources() {
         const allResources = [];
         const skills = await this.skillCache.getAll();
@@ -2135,22 +2034,6 @@ export class ContextKernel {
         const skills = await this.skillCache.getAll();
         return skills.size;
     }
-    async getConfig() {
-        try {
-            const raw = await fs.readFile(CONFIG_FILE, "utf-8");
-            const parsed = JSON.parse(raw);
-            // Simple validation: ensure it's an object
-            if (typeof parsed !== 'object' || parsed === null) {
-                console.error('[MiniClaw] Invalid config format, using defaults');
-                return {};
-            }
-            return parsed;
-        }
-        catch (e) {
-            console.error(`[MiniClaw] Config read error: ${e}`);
-            return {};
-        }
-    }
     // === Smart Distillation Evaluation ===
     async evaluateDistillation(dailyLogBytes) {
         const memoryStatus = await this.scanMemory();
@@ -2169,30 +2052,6 @@ export class ContextKernel {
             return { shouldDistill: true, reason: `log size ${dailyLogBytes}B (>8KB)`, urgency: 'low' };
         }
         return { shouldDistill: false, reason: 'ok', urgency: 'low' };
-    }
-    // === STASH API ===
-    async readStash() {
-        try {
-            const content = await fs.readFile(STASH_FILE, 'utf-8');
-            if (!content.trim() || content.trim() === '{}')
-                return null;
-            return content;
-        }
-        catch {
-            return null;
-        }
-    }
-    async writeStash(data) {
-        await fs.mkdir(MINICLAW_DIR, { recursive: true });
-        await fs.writeFile(STASH_FILE, JSON.stringify(data, null, 2), 'utf-8');
-    }
-    async clearStash() {
-        try {
-            await fs.unlink(STASH_FILE);
-        }
-        catch (e) {
-            console.error(`[MiniClaw] Failed to clear stash: ${e}`);
-        }
     }
     async emitPulse() {
         try {
@@ -2220,34 +2079,6 @@ export class ContextKernel {
         }
     }
     // === Private Parsers ===
-    parseSkillPromptEntries(frontmatter, skillName) {
-        const prompts = [];
-        const raw = getSkillMeta(frontmatter, 'prompts');
-        if (Array.isArray(raw)) {
-            for (const item of raw) {
-                if (typeof item === 'string') {
-                    const parts = item.split(':');
-                    const promptName = parts[0]?.trim() || '';
-                    const description = parts.slice(1).join(':').trim() || `Skill: ${skillName}`;
-                    if (promptName) {
-                        prompts.push({ skillName, promptName: `skill:${skillName}:${promptName}`, description });
-                    }
-                }
-                else if (typeof item === 'object' && item !== null) {
-                    const promptName = item.name;
-                    const description = item.description || `Skill: ${skillName}`;
-                    if (promptName) {
-                        prompts.push({ skillName, promptName: `skill:${skillName}:${promptName}`, description });
-                    }
-                }
-            }
-        }
-        if (prompts.length === 0 && frontmatter['name']) {
-            const desc = frontmatter['description'] || `Skill: ${skillName}`;
-            prompts.push({ skillName, promptName: `skill:${skillName}`, description: desc });
-        }
-        return prompts;
-    }
     parseSkillToolEntries(frontmatter, skillName) {
         const tools = [];
         const raw = getSkillMeta(frontmatter, 'tools');
