@@ -4,7 +4,7 @@ import os from "node:os";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { parseFrontmatter, hashString, atomicWrite } from "./utils.js";
+import { parseFrontmatter, hashString, atomicWrite, blend, clamp, nowIso, daysSince, hoursSince, fileExists } from "./utils.js";
 import { analyzePatterns, triggerEvolution as runEvolution } from "./evolution.js";
 const execAsync = promisify(exec);
 // === Configuration & Constants ===
@@ -26,6 +26,16 @@ const SKELETON_THRESHOLD = 300; // Lower threshold to trigger skeletonization ev
 function getSkillMeta(fm, key) {
     const meta = fm['metadata'];
     return meta?.[key] ?? fm[key];
+}
+// === Helper: Safe file stat with null handling ===
+async function safeStat(filePath) {
+    try {
+        const stats = await fs.stat(filePath);
+        return stats.mtime;
+    }
+    catch {
+        return null;
+    }
 }
 const TIME_MODES = {
     morning: { emoji: "☀️", label: "Morning", briefing: true, reflective: false, minimal: false },
@@ -457,8 +467,7 @@ class EntityStore {
             const data = JSON.parse(raw);
             this.entities = Array.isArray(data.entities) ? data.entities : [];
         }
-        catch (e) {
-            // First run or corrupted file, start fresh
+        catch {
             this.entities = [];
         }
         this.loaded = true;
@@ -471,35 +480,22 @@ class EntityStore {
         const now = new Date().toISOString().split('T')[0];
         const existing = this.entities.find(e => e.name.toLowerCase() === entity.name.toLowerCase());
         if (existing) {
+            // Update existing entity
             existing.lastMentioned = now;
             existing.mentionCount++;
-            // Merge attributes and relations
             Object.assign(existing.attributes, entity.attributes);
             for (const rel of entity.relations) {
                 if (!existing.relations.includes(rel))
                     existing.relations.push(rel);
             }
-            // Auto-increment closeness on mention
             existing.closeness = Math.min(1, Math.round(((existing.closeness || 0) * 0.95 + 0.1) * 100) / 100);
             if (entity.sentiment !== undefined)
                 existing.sentiment = entity.sentiment;
             await this.save();
             return existing;
         }
-        // Check entity limit before adding
-        if (this.entities.length >= this.MAX_ENTITIES) {
-            // Remove oldest entity (lowest mentionCount and oldest lastMentioned)
-            const oldest = this.entities
-                .filter(e => e.mentionCount <= 1)
-                .sort((a, b) => new Date(a.lastMentioned).getTime() - new Date(b.lastMentioned).getTime())[0];
-            if (oldest) {
-                const idx = this.entities.findIndex(e => e.name === oldest.name);
-                if (idx !== -1) {
-                    console.error(`[MiniClaw] EntityStore: Removing old entity "${oldest.name}" (limit: ${this.MAX_ENTITIES})`);
-                    this.entities.splice(idx, 1);
-                }
-            }
-        }
+        // Check and enforce entity limit
+        await this.enforceEntityLimit();
         const newEntity = {
             ...entity,
             firstMentioned: now,
@@ -510,6 +506,20 @@ class EntityStore {
         this.entities.push(newEntity);
         await this.save();
         return newEntity;
+    }
+    async enforceEntityLimit() {
+        if (this.entities.length < this.MAX_ENTITIES)
+            return;
+        const oldest = this.entities
+            .filter(e => e.mentionCount <= 1)
+            .sort((a, b) => new Date(a.lastMentioned).getTime() - new Date(b.lastMentioned).getTime())[0];
+        if (oldest) {
+            const idx = this.entities.findIndex(e => e.name === oldest.name);
+            if (idx !== -1) {
+                console.error(`[MiniClaw] EntityStore: Removing old entity "${oldest.name}" (limit: ${this.MAX_ENTITIES})`);
+                this.entities.splice(idx, 1);
+            }
+        }
     }
     async remove(name) {
         await this.load();
@@ -538,9 +548,7 @@ class EntityStore {
     }
     async list(type) {
         await this.load();
-        if (type)
-            return this.entities.filter(e => e.type === type);
-        return [...this.entities];
+        return type ? this.entities.filter(e => e.type === type) : [...this.entities];
     }
     async getCount() {
         await this.load();
@@ -579,6 +587,7 @@ export class ContextKernel {
     entityStore = new EntityStore();
     autonomicSystem;
     bootErrors = [];
+    currentGenome = null; // Cache for reuse during boot
     state = {
         analytics: {
             toolCalls: {}, bootCount: 0,
@@ -644,6 +653,13 @@ export class ContextKernel {
     async saveState() {
         await atomicWrite(STATE_FILE, JSON.stringify(this.state, null, 2));
     }
+    // --- State Mutation Helper (reduces boilerplate) ---
+    async mutateState(mutator) {
+        await this.loadState();
+        const result = mutator(this.state);
+        await this.saveState();
+        return result;
+    }
     // --- Analytics API ---
     // --- Heartbeat State API (unified state) ---
     async getHeartbeatState() {
@@ -651,9 +667,9 @@ export class ContextKernel {
         return { ...this.state.heartbeat };
     }
     async updateHeartbeatState(updates) {
-        await this.loadState();
-        Object.assign(this.state.heartbeat, updates);
-        await this.saveState();
+        return this.mutateState(state => {
+            Object.assign(state.heartbeat, updates);
+        });
     }
     async trackTool(toolName, energyEstimate) {
         await this.loadState();
@@ -690,28 +706,26 @@ export class ContextKernel {
         return { ...this.state.analytics };
     }
     async trackFileChange(filename) {
-        await this.loadState();
-        if (!this.state.analytics.fileChanges)
-            this.state.analytics.fileChanges = {};
-        this.state.analytics.fileChanges[filename] = (this.state.analytics.fileChanges[filename] || 0) + 1;
-        await this.saveState();
+        return this.mutateState(state => {
+            if (!state.analytics.fileChanges)
+                state.analytics.fileChanges = {};
+            state.analytics.fileChanges[filename] = (state.analytics.fileChanges[filename] || 0) + 1;
+        });
     }
     // === Affect & Pain Management ===
     async updateAffect(delta) {
-        await this.loadState();
-        const blend = (c, t, r = 0.3) => c + (t - c) * r;
-        const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-        const { alertness, mood, curiosity, confidence } = delta;
-        if (alertness !== undefined)
-            this.state.affect.alertness = clamp(blend(this.state.affect.alertness, alertness), 0, 1);
-        if (mood !== undefined)
-            this.state.affect.mood = clamp(blend(this.state.affect.mood, mood), -1, 1);
-        if (curiosity !== undefined)
-            this.state.affect.curiosity = clamp(blend(this.state.affect.curiosity, curiosity), 0, 1);
-        if (confidence !== undefined)
-            this.state.affect.confidence = clamp(blend(this.state.affect.confidence, confidence), 0, 1);
-        this.state.affect.lastUpdate = new Date().toISOString();
-        await this.saveState();
+        return this.mutateState(state => {
+            const { alertness, mood, curiosity, confidence } = delta;
+            if (alertness !== undefined)
+                state.affect.alertness = clamp(blend(state.affect.alertness, alertness), 0, 1);
+            if (mood !== undefined)
+                state.affect.mood = clamp(blend(state.affect.mood, mood), -1, 1);
+            if (curiosity !== undefined)
+                state.affect.curiosity = clamp(blend(state.affect.curiosity, curiosity), 0, 1);
+            if (confidence !== undefined)
+                state.affect.confidence = clamp(blend(state.affect.confidence, confidence), 0, 1);
+            state.affect.lastUpdate = nowIso();
+        });
     }
     async getAffect() {
         await this.loadState();
@@ -719,41 +733,27 @@ export class ContextKernel {
     }
     // === Pain Memory (Nociception) ===
     async recordPain(pain) {
-        await this.loadState();
-        const newPain = {
-            ...pain,
-            timestamp: new Date().toISOString(),
-            weight: pain.intensity,
-        };
-        this.state.painMemory.push(newPain);
-        // Keep only recent 50 memories
-        if (this.state.painMemory.length > 50) {
-            this.state.painMemory = this.state.painMemory.slice(-50);
-        }
-        // ★ Pain affects emotional state
-        const affect = this.state.affect;
-        this.state.affect = {
-            alertness: Math.min(1, affect.alertness + pain.intensity * 0.3),
-            mood: Math.max(-1, affect.mood - pain.intensity * 0.2),
-            curiosity: Math.max(0, affect.curiosity - pain.intensity * 0.15), // Hurt → less curious
-            confidence: Math.max(0, affect.confidence - pain.intensity * 0.1),
-            lastUpdate: new Date().toISOString(),
-        };
-        await this.saveState();
+        await this.mutateState(state => {
+            state.painMemory.push({ ...pain, timestamp: nowIso(), weight: pain.intensity });
+            if (state.painMemory.length > 50)
+                state.painMemory = state.painMemory.slice(-50);
+            // Pain affects emotional state
+            state.affect.alertness = clamp(state.affect.alertness + pain.intensity * 0.3, 0, 1);
+            state.affect.mood = clamp(state.affect.mood - pain.intensity * 0.2, -1, 1);
+            state.affect.curiosity = Math.max(0, state.affect.curiosity - pain.intensity * 0.15);
+            state.affect.confidence = Math.max(0, state.affect.confidence - pain.intensity * 0.1);
+            state.affect.lastUpdate = nowIso();
+        });
         console.error(`[MiniClaw] 💢 Pain recorded: ${pain.action} (alertness↑ mood↓ curiosity↓)`);
     }
     // Check if there's pain memory for given context/action (with decay)
     async hasPainMemory(context, action) {
         await this.loadState();
-        const now = Date.now();
         for (const pain of this.state.painMemory) {
-            const daysSince = (now - new Date(pain.timestamp).getTime()) / (1000 * 60 * 60 * 24);
-            const decayedWeight = pain.weight * Math.pow(0.5, daysSince / PAIN_DECAY_DAYS);
+            const decayedWeight = pain.weight * Math.pow(0.5, daysSince(pain.timestamp) / PAIN_DECAY_DAYS);
             if (decayedWeight > PAIN_THRESHOLD) {
-                // Fuzzy match context and action
-                const contextMatch = context.includes(pain.context) || pain.context.includes(context);
-                const actionMatch = action === pain.action || action.includes(pain.action) || pain.action.includes(action);
-                if (contextMatch || actionMatch) {
+                if (context.includes(pain.context) || pain.context.includes(context) ||
+                    action === pain.action || action.includes(pain.action) || pain.action.includes(action)) {
                     return true;
                 }
             }
@@ -763,24 +763,17 @@ export class ContextKernel {
     // Get current pain status for vitals
     async getPainStatus() {
         await this.loadState();
-        const now = Date.now();
         let totalWeight = 0;
         const recent = [];
         for (const pain of this.state.painMemory) {
-            const daysSince = (now - new Date(pain.timestamp).getTime()) / (1000 * 60 * 60 * 24);
-            const decayedWeight = pain.weight * Math.pow(0.5, daysSince / PAIN_DECAY_DAYS);
+            const decayedWeight = pain.weight * Math.pow(0.5, daysSince(pain.timestamp) / PAIN_DECAY_DAYS);
             if (decayedWeight > 0.1) {
                 totalWeight += decayedWeight;
-                if (recent.length < 3) {
+                if (recent.length < 3)
                     recent.push({ ...pain, weight: decayedWeight });
-                }
             }
         }
-        return {
-            count: this.state.painMemory.length,
-            totalWeight,
-            recent,
-        };
+        return { count: this.state.painMemory.length, totalWeight, recent };
     }
     // ★ Genesis Logger
     async logGenesis(event, target, type) {
@@ -802,10 +795,7 @@ export class ContextKernel {
         await this.loadState();
         const analytics = this.state.analytics;
         // idle_hours: time since last activity
-        let idleHours = 0;
-        if (analytics.lastActivity) {
-            idleHours = Math.round((Date.now() - new Date(analytics.lastActivity).getTime()) / 3600000 * 10) / 10;
-        }
+        const idleHours = analytics.lastActivity ? Math.round(hoursSince(analytics.lastActivity) * 10) / 10 : 0;
         // session_streak: count consecutive days with daily log files (looking back from today)
         let streak = 0;
         try {
@@ -814,7 +804,7 @@ export class ContextKernel {
             for (let i = 0; i < 30; i++) {
                 const d = new Date(today);
                 d.setDate(d.getDate() - i);
-                const fn = `${d.toISOString().split('T')[0]}.md`;
+                const fn = `${d.toISOString().slice(0, 10)}.md`;
                 try {
                     await fs.access(path.join(memDir, fn));
                     streak++;
@@ -898,7 +888,7 @@ export class ContextKernel {
     }
     /**
      * Boot the kernel and assemble the context.
-     * Living Agent v0.5 "The Nervous System":
+     * Living Agent v0.7 "The Nervous System":
      * - ACE (Time, Continuation)
      * - Workspace Auto-Detection (Project, Git, Files)
      */
@@ -935,14 +925,14 @@ export class ContextKernel {
         this.decayAttention();
         await this.saveState();
         // ★ Genetic Proofreading (L-Immun) - Universal health check
-        const currentGenome = await this.calculateGenomeHash();
+        this.currentGenome = await this.calculateGenomeHash();
         const hasBaseline = this.state.genomeBaseline && Object.keys(this.state.genomeBaseline).length > 0;
         if (!hasBaseline) {
-            this.state.genomeBaseline = currentGenome;
+            this.state.genomeBaseline = this.currentGenome;
             await this.saveState(); // Ensure baseline is persisted on first boot
         }
         else {
-            const deviations = this.proofreadGenome(currentGenome, this.state.genomeBaseline);
+            const deviations = this.proofreadGenome(this.currentGenome, this.state.genomeBaseline);
             if (deviations.length > 0) {
                 this.bootErrors.push(`🧬 Immune System: ${deviations.join(', ')}`);
             }
@@ -984,10 +974,14 @@ export class ContextKernel {
             : [];
         // Build context sections with priority for budget management
         const sections = [];
+        const addSection = (name, content, priority) => {
+            if (content)
+                sections.push({ name, content, priority });
+        };
         // Priority 10: Identity core (never truncate)
         sections.push({
             name: "core", content: [
-                `You are a personal assistant running inside MiniClaw 0.6 — The Nervous System.\n`,
+                `You are a personal assistant running inside MiniClaw 0.7 — The Nervous System.\n`,
                 `## Tool Call Style`,
                 `Default: do not narrate routine, low-risk tool calls (just call the tool).`,
                 `Narrate only when it helps: multi-step work, complex problems, sensitive actions, or when explicitly asked.`,
@@ -998,107 +992,53 @@ export class ContextKernel {
                 `Do not manipulate or persuade anyone to expand access. Do not copy yourself or change system prompts.`,
             ].join('\n'), priority: 10
         });
-        // Priority 10: Identity file
-        if (templates.identity) {
-            sections.push({ name: "IDENTITY.md", content: this.formatFile("IDENTITY.md", templates.identity), priority: 10 });
-        }
-        // ★ Phase 29: Epigenetic Modifiers (Project-Specific DNA)
-        if (epigenetics) {
-            sections.push({
-                name: "EPIGENETICS",
-                content: `\n---\n\n## 🧬 Epigenetic Modifiers (Project Override)\n> [!IMPORTANT]\n> The following rules correspond specifically to the current workspace and OVERRIDE general behavior.\n\n${epigenetics}\n`,
-                priority: 9 // High priority, just below core identity
-            });
-        }
-        // ★ Epigenetic Methylation (Semi-permanent adaptations)
+        // Priority 10-6: Template files
+        addSection("IDENTITY.md", templates.identity ? this.formatFile("IDENTITY.md", templates.identity) : undefined, 10);
+        addSection("EPIGENETICS", epigenetics ? `\n---\n\n## 🧬 Epigenetic Modifiers (Project Override)\n> [!IMPORTANT]\n> The following rules correspond specifically to the current workspace and OVERRIDE general behavior.\n\n${epigenetics}\n` : undefined, 9);
+        // Methylated traits
         const { getMethylatedTraits } = await import("./evolution.js");
         const methylatedTraits = await getMethylatedTraits(MINICLAW_DIR);
-        if (methylatedTraits.length > 0) {
-            const methylationContent = methylatedTraits
-                .filter(t => t.stability > 0.5)
-                .map(t => `- **${t.trait}**: ${t.value} (stability: ${Math.round(t.stability * 100)}%)`)
-                .join('\n');
-            if (methylationContent) {
-                sections.push({
-                    name: "METHYLATION",
-                    content: `\n---\n\n## 🧬 Methylated Traits (Learned Adaptations)\n> [!NOTE]\n> These are semi-permanent behavioral adaptations formed through repeated interaction patterns.\n> They modify how SOUL.md is expressed without changing its core sequence.\n\n${methylationContent}\n`,
-                    priority: 8
-                });
-            }
-        }
+        const methylationContent = methylatedTraits.filter(t => t.stability > 0.5)
+            .map(t => `- **${t.trait}**: ${t.value} (${Math.round(t.stability * 100)}%)`).join('\n');
+        addSection("METHYLATION", methylationContent ? `\n---\n\n## 🧬 Methylated Traits\n> Semi-permanent behavioral adaptations.\n\n${methylationContent}\n` : undefined, 8);
         // ★ Curiosity Queue: Active exploration suggestions
         const curiosityQueue = this.autonomicSystem.getCuriosityQueue();
+        // Curiosity queue
         if (curiosityQueue.length > 0) {
-            const curiosityContent = curiosityQueue
-                .map((c) => `- **${c.type}**: ${c.reason}`)
-                .join('\n');
-            sections.push({
-                name: "CURIOSITY",
-                content: `\n---\n\n## 🤔 Curiosity (Active Exploration)\n> [!TIP]\n> I have some questions and exploration ideas. These are optional but may help me serve you better.\n\n${curiosityContent}\n`,
-                priority: 5
-            });
+            const cc = curiosityQueue.map((c) => `- **${c.type}**: ${c.reason}`).join('\n');
+            addSection("CURIOSITY", `\n---\n\n## 🤔 Curiosity\n${cc}\n`, 5);
         }
-        // ★ Unified Affect State Display
+        // Affect state
         const affect = await this.getAffect();
         const affectMode = affect.alertness > 0.7 && affect.mood < 0 ? 'cautious' :
-            affect.curiosity > 0.6 && affect.mood > 0.3 ? 'explore' :
-                affect.confidence > 0.5 ? 'execute' : 'rest';
+            affect.curiosity > 0.6 && affect.mood > 0.3 ? 'explore' : affect.confidence > 0.5 ? 'execute' : 'rest';
         const moodEmoji = affect.mood > 0.3 ? '😊' : affect.mood < -0.3 ? '😔' : '😐';
-        const alertEmoji = affect.alertness > 0.7 ? '⚠️' : '';
-        const modeLabels = { explore: '🔍 Exploration Mode', execute: '⚡ Execution Mode', cautious: '🛡️ Cautious Mode', rest: '💤 Rest Mode' };
-        sections.push({
-            name: "AFFECT",
-            content: `\n---\n\n## ${moodEmoji} Emotional State ${alertEmoji}\n> Current: **${modeLabels[affectMode]}**\n\n| Metric | Value |\n|:--|:--|\n| Alertness | ${Math.round(affect.alertness * 100)}% |\n| Mood | ${affect.mood > 0 ? '+' : ''}${Math.round(affect.mood * 100)}% |\n| Curiosity | ${Math.round(affect.curiosity * 100)}% |\n| Confidence | ${Math.round(affect.confidence * 100)}% |\n`,
-            priority: 6
-        });
-        // ★ Priority 10: ACE Time Mode + Continuation
-        let aceContent = `## 🧠 Adaptive Context Engine\n`;
-        aceContent += `${tmConfig.emoji} Mode: **${tmConfig.label}** (${hour}:${String(now.getMinutes()).padStart(2, '0')})\n`;
-        if (tmConfig.reflective) {
-            aceContent += `💡 Evening mode: Consider suggesting distillation or reviewing today's work.\n`;
-        }
+        const modeLabels = { explore: '🔍 Explore', execute: '⚡ Execute', cautious: '🛡️ Cautious', rest: '💤 Rest' };
+        sections.push({ name: "AFFECT", content: `\n---\n\n## ${moodEmoji} State: **${modeLabels[affectMode]}**\n| Metric | Value |\n|---|---|\n| Alertness | ${Math.round(affect.alertness * 100)}% |\n| Mood | ${affect.mood > 0 ? '+' : ''}${Math.round(affect.mood * 100)}% |\n| Curiosity | ${Math.round(affect.curiosity * 100)}% |\n`, priority: 6 });
+        // ACE Time Mode
+        let aceContent = `## 🧠 Adaptive Context Engine\n${tmConfig.emoji} Mode: **${tmConfig.label}** (${hour}:${String(now.getMinutes()).padStart(2, '0')})\n`;
+        if (tmConfig.reflective)
+            aceContent += `💡 Evening: Consider distillation.\n`;
         if (tmConfig.briefing && !continuation.isReturn) {
-            aceContent += `🌅 Morning mode: Here is your daily briefing.\n`;
             try {
-                const briefingContent = await this.generateBriefing();
-                sections.push({ name: "briefing", content: briefingContent, priority: 7 });
+                sections.push({ name: "briefing", content: await this.generateBriefing(), priority: 7 });
             }
-            catch { /* briefing generation failed, skip silently */ }
+            catch { }
         }
         if (continuation.isReturn) {
-            aceContent += `\n### 🔗 Session Continuation\n`;
-            aceContent += `Welcome back (${continuation.hoursSinceLastActivity}h since last activity).\n`;
+            aceContent += `\n### 🔗 Session Continuation\nWelcome back (${continuation.hoursSinceLastActivity}h since last activity).\n`;
             if (continuation.lastTopic)
-                aceContent += `Last topic: ${continuation.lastTopic}\n`;
-            if (continuation.recentDecisions.length > 0) {
-                aceContent += `Key decisions: ${continuation.recentDecisions.join('; ')}\n`;
-            }
-            if (continuation.openQuestions.length > 0) {
-                aceContent += `Open questions: ${continuation.openQuestions.join('; ')}\n`;
-            }
+                aceContent += `Last: ${continuation.lastTopic}\n`;
+            if (continuation.recentDecisions.length > 0)
+                aceContent += `Decisions: ${continuation.recentDecisions.join('; ')}\n`;
         }
         sections.push({ name: "ace", content: aceContent, priority: 10 });
-        // Priority 9: Soul / persona
-        if (templates.soul) {
-            let soulContent = `If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies.\n`;
-            soulContent += this.formatFile("SOUL.md", templates.soul);
-            sections.push({ name: "SOUL.md", content: soulContent, priority: 9 });
-        }
-        // Priority 9: AGENTS.md
-        if (templates.agents) {
-            sections.push({ name: "AGENTS.md", content: this.formatFile("AGENTS.md", templates.agents), priority: 9 });
-        }
-        // Priority 8: User profile (Chr-3) & Horizons (Chr-8)
-        if (templates.user) {
-            sections.push({ name: "USER.md", content: this.formatFile("USER.md", templates.user), priority: 8 });
-        }
-        if (templates.horizons) {
-            sections.push({ name: "HORIZONS.md", content: this.formatFile("HORIZONS.md", templates.horizons), priority: 8 });
-        }
-        // Priority 7: Long-term memory
-        if (templates.memory) {
-            sections.push({ name: "MEMORY.md", content: `## Memory Recall\nBefore answering about prior work, decisions, or preferences: check MEMORY.md below.\nUse \`miniclaw_search\` to scan \`${MINICLAW_DIR}\` for deeper searches.\n(Memory Age: ${memoryStatus.archivedCount} days of archived logs)\n\n` + this.formatFile("MEMORY.md", templates.memory), priority: 7 });
-        }
+        // Template sections (9-7)
+        addSection("SOUL.md", templates.soul ? `If SOUL.md is present, embody its persona.\n${this.formatFile("SOUL.md", templates.soul)}` : undefined, 9);
+        addSection("AGENTS.md", templates.agents ? this.formatFile("AGENTS.md", templates.agents) : undefined, 9);
+        addSection("USER.md", templates.user ? this.formatFile("USER.md", templates.user) : undefined, 8);
+        addSection("HORIZONS.md", templates.horizons ? this.formatFile("HORIZONS.md", templates.horizons) : undefined, 8);
+        addSection("MEMORY.md", templates.memory ? `## Memory\n(${memoryStatus.archivedCount} days archived)\n${this.formatFile("MEMORY.md", templates.memory)}` : undefined, 7);
         // ★ Priority 6: Workspace Intelligence (NEW)
         if (workspaceInfo) {
             let wsContent = `## 👁️ Workspace Awareness\n`;
@@ -1257,9 +1197,9 @@ export class ContextKernel {
             }
         }
         catch { /* vitals should never break boot */ }
-        // ★ Inflammatory Response (L-Immun)
-        if (this.state.genomeBaseline) {
-            const deviations = this.proofreadGenome(await this.calculateGenomeHash(), this.state.genomeBaseline);
+        // ★ Inflammatory Response (L-Immun) - Reuse currentGenome calculated earlier
+        if (this.state.genomeBaseline && this.currentGenome) {
+            const deviations = this.proofreadGenome(this.currentGenome, this.state.genomeBaseline);
             if (deviations.length > 0) {
                 sections.push({
                     name: "immune_response",
@@ -1316,44 +1256,33 @@ export class ContextKernel {
         }
         await this.saveState();
         // --- Final assembly ---
-        let context = `# Project Context\n\n`;
-        context += `The following project context files have been loaded:\n\n`;
-        context += compiled.output;
-        // Boot footer
         const avgBootMs = Math.round(this.state.analytics.totalBootMs / this.state.analytics.bootCount);
-        context += `\n---\n`;
-        context += `${tmConfig.emoji} ${tmConfig.label} | `;
-        context += `📏 ~${compiled.totalTokens}/${compiled.budgetTokens} tokens (${compiled.utilizationPct}%)`;
-        if (compiled.truncatedSections.length > 0) {
-            context += ` | ✂️ ${compiled.truncatedSections.join(', ')}`;
-        }
-        if (memoryStatus.archivedCount > 0) {
-            context += ` | 📚 ${memoryStatus.archivedCount} archived`;
-        }
         const entityCount = await this.entityStore.getCount();
-        if (entityCount > 0) {
-            context += ` | 🕸️ ${entityCount} entities`;
-        }
-        context += ` | ⚡ ${bootMs}ms (avg ${avgBootMs}ms) | 🔄 boot #${this.state.analytics.bootCount}`;
-        // Delta report
-        if (delta.changed.length > 0 || delta.newSections.length > 0) {
-            const changes = [];
-            if (delta.changed.length > 0)
-                changes.push(`✏️ ${delta.changed.join(', ')}`);
-            if (delta.newSections.length > 0)
-                changes.push(`🆕 ${delta.newSections.join(', ')}`);
-            context += `\n📊 ${changes.join(' | ')}`;
-        }
-        // ★ Self-Evolution: File health warnings
+        const footerParts = [
+            `${tmConfig.emoji} ${tmConfig.label}`,
+            `📏 ~${compiled.totalTokens}/${compiled.budgetTokens} tokens (${compiled.utilizationPct}%)`,
+            compiled.truncatedSections.length > 0 ? `✂️ ${compiled.truncatedSections.join(', ')}` : null,
+            memoryStatus.archivedCount > 0 ? `📚 ${memoryStatus.archivedCount} archived` : null,
+            entityCount > 0 ? `🕸️ ${entityCount} entities` : null,
+            `⚡ ${bootMs}ms (avg ${avgBootMs}ms) | 🔄 boot #${this.state.analytics.bootCount}`,
+        ];
+        const changes = [];
+        if (delta.changed.length > 0)
+            changes.push(`✏️ ${delta.changed.join(', ')}`);
+        if (delta.newSections.length > 0)
+            changes.push(`🆕 ${delta.newSections.join(', ')}`);
         const healthWarnings = await this.checkFileHealth();
-        if (healthWarnings.length > 0) {
-            context += `\n🏥 ${healthWarnings.join(' | ')}`;
-        }
-        // Error report
-        if (this.bootErrors.length > 0) {
-            context += `\n⚠️ Errors (${this.bootErrors.length}): ${this.bootErrors.slice(0, 3).join('; ')}`;
-        }
-        context += `\n\n---\n📏 Context Size: ${context.length} chars (~${Math.round(context.length / 4)} tokens)\n`;
+        const errorLine = this.bootErrors.length > 0 ? `⚠️ Errors (${this.bootErrors.length}): ${this.bootErrors.slice(0, 3).join('; ')}` : null;
+        const context = [
+            `# Project Context\n\nThe following project context files have been loaded:\n\n`,
+            compiled.output,
+            `\n---\n`,
+            footerParts.filter(Boolean).join(' | '),
+            changes.length > 0 ? `\n📊 ${changes.join(' | ')}` : '',
+            healthWarnings.length > 0 ? `\n🏥 ${healthWarnings.join(' | ')}` : '',
+            errorLine ? `\n${errorLine}` : '',
+            `\n\n---\n📏 Context Size: ${compiled.totalChars} chars (~${compiled.totalTokens} tokens)\n`,
+        ].join('');
         return context;
     }
     // === EXEC: Safe Command Execution ===
@@ -1376,6 +1305,36 @@ export class ContextKernel {
         const dangerousChars = /[;|&`$(){}\\<>!\n]/;
         if (dangerousChars.test(command)) {
             throw new Error(`Command contains disallowed shell metacharacters.`);
+        }
+        // P0 Fix #3: Block inline code execution (python -c, node -e, etc.)
+        const interpreters = ['python', 'python3', 'node', 'go', 'cargo'];
+        const inlineFlags = ['-c', '-e', '--eval', '-m'];
+        if (interpreters.includes(basename)) {
+            const cmdArgs = command.split(/\s+/).slice(1);
+            for (const arg of cmdArgs) {
+                if (inlineFlags.includes(arg)) {
+                    throw new Error(`Inline code execution via '${basename} ${arg}' is not allowed. Use script files instead.`);
+                }
+            }
+        }
+        // P0 Fix #4: Block access to sensitive directories
+        const sensitivePatterns = [
+            '~/.ssh', '~/.aws', '~/.gnupg', '~/.config/gcloud',
+            '~/.kube', '~/.docker', '~/.npmrc', '~/.netrc',
+            '.env', 'id_rsa', 'id_ed25519', 'credentials',
+            '/etc/shadow', '/etc/passwd',
+        ];
+        const expandedHome = process.env.HOME || '';
+        const normalizedCmd = command.replace(/~/g, expandedHome);
+        for (const pattern of sensitivePatterns) {
+            const expanded = pattern.replace(/~/g, expandedHome);
+            if (normalizedCmd.includes(expanded) || command.includes(pattern)) {
+                throw new Error(`Access to sensitive path '${pattern}' is not allowed.`);
+            }
+        }
+        // P0 Fix #5: Block path traversal beyond workspace
+        if (command.includes('/../') || command.endsWith('/..')) {
+            throw new Error(`Path traversal patterns are not allowed.`);
         }
         try {
             const { stdout, stderr } = await execAsync(command, {
@@ -1974,16 +1933,14 @@ export class ContextKernel {
         }
     }
     async syncBuiltInSkills() {
+        if (!(await fileExists(INTERNAL_SKILLS_DIR)))
+            return;
         try {
-            if (!(await fs.access(INTERNAL_SKILLS_DIR).then(() => true).catch(() => false)))
-                return;
-            const builtIn = await fs.readdir(INTERNAL_SKILLS_DIR, { withFileTypes: true });
-            const builtInDirs = builtIn.filter(e => e.isDirectory());
-            for (const dir of builtInDirs) {
-                const targetPath = path.join(SKILLS_DIR, dir.name);
-                // If it doesn't exist, copy it entire
-                if (!(await fs.access(targetPath).then(() => true).catch(() => false))) {
-                    await this.copyDirRecursive(path.join(INTERNAL_SKILLS_DIR, dir.name), targetPath);
+            const dirs = (await fs.readdir(INTERNAL_SKILLS_DIR, { withFileTypes: true })).filter(e => e.isDirectory());
+            for (const dir of dirs) {
+                const target = path.join(SKILLS_DIR, dir.name);
+                if (!(await fileExists(target))) {
+                    await this.copyDirRecursive(path.join(INTERNAL_SKILLS_DIR, dir.name), target);
                 }
             }
         }
@@ -1992,16 +1949,15 @@ export class ContextKernel {
         }
     }
     async syncBuiltInTemplates() {
+        if (!(await fileExists(INTERNAL_TEMPLATES_DIR)))
+            return;
         try {
-            if (!(await fs.access(INTERNAL_TEMPLATES_DIR).then(() => true).catch(() => false)))
-                return;
-            const builtIn = await fs.readdir(INTERNAL_TEMPLATES_DIR, { withFileTypes: true });
-            const builtInFiles = builtIn.filter(e => e.isFile() && e.name.endsWith('.md'));
-            for (const file of builtInFiles) {
-                const targetPath = path.join(MINICLAW_DIR, file.name);
-                // For core templates, we only copy if they don't exist
-                if (!(await fs.access(targetPath).then(() => true).catch(() => false))) {
-                    await fs.copyFile(path.join(INTERNAL_TEMPLATES_DIR, file.name), targetPath);
+            const files = (await fs.readdir(INTERNAL_TEMPLATES_DIR, { withFileTypes: true }))
+                .filter(e => e.isFile() && e.name.endsWith('.md'));
+            for (const file of files) {
+                const target = path.join(MINICLAW_DIR, file.name);
+                if (!(await fileExists(target))) {
+                    await fs.copyFile(path.join(INTERNAL_TEMPLATES_DIR, file.name), target);
                 }
             }
         }

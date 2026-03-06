@@ -8,41 +8,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cron from "node-cron";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
-import { textResult, errorResult } from "./utils.js";
+import { textResult, errorResult, today, nowIso, fileExists, safeRead } from "./utils.js";
 // Configuration
 const kernel = new ContextKernel();
 // Start autonomic nervous system (pulse + dream)
 kernel.startAutonomic();
 // Ensure miniclaw dir exists
-async function ensureDir() {
-    try {
-        await fs.access(MINICLAW_DIR);
-    }
-    catch {
-        try {
-            await fs.mkdir(MINICLAW_DIR, { recursive: true });
-        }
-        catch (e) {
-            console.error(`[MiniClaw] Failed to create directory: ${e instanceof Error ? e.message : String(e)}`);
-        }
-    }
-}
+const ensureDir = () => fs.mkdir(MINICLAW_DIR, { recursive: true }).catch(() => { });
 // Check if initialized
-async function isInitialized() {
-    try {
-        await fs.access(path.join(MINICLAW_DIR, "AGENTS.md"));
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
+const isInitialized = () => fileExists(path.join(MINICLAW_DIR, "AGENTS.md"));
 // --- Internal Scheduler ---
 async function executeHeartbeat() {
     try {
         const hbState = await kernel.getHeartbeatState();
-        const today = new Date().toISOString().split('T')[0];
-        const dailyLogPath = path.join(MINICLAW_DIR, "memory", `${today}.md`);
+        const todayStr = today();
+        const dailyLogPath = path.join(MINICLAW_DIR, "memory", `${todayStr}.md`);
         try {
             const stats = await fs.stat(dailyLogPath);
             const evaluation = await kernel.evaluateDistillation(stats.size);
@@ -61,7 +41,7 @@ async function executeHeartbeat() {
             // No daily log file yet, reset bytes
             await kernel.updateHeartbeatState({ dailyLogBytes: 0 });
         }
-        await kernel.updateHeartbeatState({ lastHeartbeat: new Date().toISOString() });
+        await kernel.updateHeartbeatState({ lastHeartbeat: nowIso() });
         await kernel.emitPulse();
         // Fire onHeartbeat skill hooks
         try {
@@ -369,142 +349,79 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             // --- LIST: show all files with their boot-priority ---
             if (action === "list") {
                 await ensureDir();
-                const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
-                const mdFiles = entries.filter(e => e.isFile() && e.name.endsWith('.md'));
-                const lines = [];
-                for (const f of mdFiles) {
-                    const fileContent = await fs.readFile(path.join(MINICLAW_DIR, f.name), 'utf-8');
-                    const fmMatch = fileContent.match(/^---\n([\s\S]*?)\n---/);
-                    let priority = '-';
-                    if (fmMatch) {
-                        const bpMatch = fmMatch[1].match(/boot-priority:\s*(\d+)/);
-                        if (bpMatch)
-                            priority = bpMatch[1];
-                    }
-                    const isCore = protectedFiles.has(f.name) ? '\ud83d\udd12' : '\ud83d\udcc4';
+                const entries = (await fs.readdir(MINICLAW_DIR, { withFileTypes: true }))
+                    .filter(e => e.isFile() && e.name.endsWith('.md'));
+                const lines = await Promise.all(entries.map(async (f) => {
+                    const content = await safeRead(path.join(MINICLAW_DIR, f.name));
+                    const bp = content.match(/boot-priority:\s*(\d+)/)?.[1] || '-';
+                    const isCore = protectedFiles.has(f.name) ? '🔒' : '📄';
                     const stat = await fs.stat(path.join(MINICLAW_DIR, f.name));
-                    lines.push(`${isCore} **${f.name}** \u2014 ${stat.size}B | boot-priority: ${priority}`);
-                }
-                return textResult(lines.length > 0 ? `\ud83d\udcc2 Files in ~/.miniclaw/:\n\n${lines.join('\n')}` : '\ud83d\udcc2 No files found.');
+                    return `${isCore} **${f.name}** — ${stat.size}B | priority: ${bp}`;
+                }));
+                return textResult(lines.length > 0 ? `📂 Files in ~/.miniclaw/:\n\n${lines.join('\n')}` : '📂 No files found.');
             }
             // --- DELETE: remove non-core files ---
             if (action === "delete") {
                 if (!parsed.filename)
                     throw new Error("filename is required for delete.");
-                if (protectedFiles.has(parsed.filename)) {
+                if (protectedFiles.has(parsed.filename))
                     return errorResult(`Cannot delete core file: ${parsed.filename}`);
-                }
                 const p = path.join(MINICLAW_DIR, parsed.filename);
                 try {
                     await fs.unlink(p);
                     await kernel.logGenesis("file_deleted", parsed.filename);
-                    try {
-                        await kernel.runSkillHooks("onFileChanged", { filename: parsed.filename });
-                    }
-                    catch (e) {
-                        console.error(`[MiniClaw] onFileChanged hook error: ${e}`);
-                    }
-                    return textResult(`\ud83d\uddd1\ufe0f Deleted ${parsed.filename}`);
+                    await kernel.runSkillHooks("onFileChanged", { filename: parsed.filename }).catch(() => { });
+                    return textResult(`🗑️ Deleted ${parsed.filename}`);
                 }
                 catch {
                     return errorResult(`File not found: ${parsed.filename}`);
                 }
             }
             // --- WRITE: create or update file ---
-            if (!parsed.filename)
-                throw new Error("filename is required for write.");
-            if (!parsed.content && parsed.content !== "")
-                throw new Error("content is required for write.");
+            if (!parsed.filename || (parsed.content === undefined))
+                throw new Error("filename and content required.");
             const filename = parsed.filename;
-            const writeContent = parsed.content;
-            // Security: no path traversal
-            if (filename.includes('..') || filename.includes('/')) {
-                throw new Error("Filename must be a simple name like 'GOALS.md', no paths allowed.");
-            }
-            if (!filename.endsWith('.md')) {
+            if (filename.includes('..') || filename.includes('/'))
+                throw new Error("Filename must be simple like 'GOALS.md'.");
+            if (!filename.endsWith('.md'))
                 throw new Error("Only .md files are allowed.");
-            }
             await ensureDir();
             const p = path.join(MINICLAW_DIR, filename);
-            const isNewFile = !protectedFiles.has(filename) && !(await fs.access(p).then(() => true, () => false));
-            try {
-                await fs.copyFile(p, p + ".bak");
-            }
-            catch (e) {
-                console.error(`[MiniClaw] Backup failed: ${e}`);
-            }
-            await fs.writeFile(p, writeContent, "utf-8");
-            if (filename === "MEMORY.md") {
-                await kernel.updateHeartbeatState({
-                    needsDistill: false,
-                    lastDistill: new Date().toISOString(),
-                });
-            }
-            // Fire skill hooks
-            try {
-                await kernel.runSkillHooks("onMemoryWrite", { filename });
-            }
-            catch (e) {
-                console.error(`[MiniClaw] onMemoryWrite hook error: ${e}`);
-            }
+            const isNewFile = !protectedFiles.has(filename) && !(await fileExists(p));
+            await fs.copyFile(p, p + ".bak").catch(() => { });
+            await fs.writeFile(p, parsed.content, "utf-8");
+            if (filename === "MEMORY.md")
+                await kernel.updateHeartbeatState({ needsDistill: false, lastDistill: nowIso() });
+            await kernel.runSkillHooks("onMemoryWrite", { filename }).catch(() => { });
             if (isNewFile) {
                 await kernel.logGenesis("file_created", filename);
-                try {
-                    await kernel.runSkillHooks("onFileCreated", { filename });
-                }
-                catch (e) {
-                    console.error(`[MiniClaw] onFileCreated hook error: ${e}`);
-                }
+                await kernel.runSkillHooks("onFileCreated", { filename }).catch(() => { });
             }
-            // ★ Track file changes for self-observation
-            try {
-                await kernel.trackFileChange(filename);
-            }
-            catch (e) {
-                console.error(`[MiniClaw] Track file change error: ${e}`);
-            }
+            await kernel.trackFileChange(filename).catch(() => { });
             return textResult(isNewFile ? `✨ Created new file: ${filename}` : `Updated ${filename}.`);
         }
         if (name === "miniclaw_introspect") {
             const scope = args?.scope || "summary";
             const analytics = await kernel.getAnalytics();
             if (scope === "tools") {
-                const sorted = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
-                const lines = sorted.map(([tool, count]) => `- ${tool}: ${count}x`);
-                return textResult(`\ud83d\udd27 Tool Usage:\n\n${lines.join('\n') || '(no data yet)'}`);
+                const lines = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]).map(([t, c]) => `- ${t}: ${c}x`);
+                return textResult(`🔧 Tool Usage:\n\n${lines.join('\n') || '(no data)'}`);
             }
             if (scope === "files") {
                 const fc = analytics.fileChanges || {};
-                const sorted = Object.entries(fc).sort((a, b) => b[1] - a[1]);
-                const lines = sorted.map(([file, count]) => `- ${file}: ${count} changes`);
-                // Also list dynamic files
-                try {
-                    await ensureDir();
-                    const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
-                    const dynamicMds = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !protectedFiles.has(e.name));
-                    if (dynamicMds.length > 0) {
-                        lines.push(`\n\ud83e\udde9 Custom Files: ${dynamicMds.map(f => f.name).join(', ')}`);
-                    }
-                }
-                catch { /* skip */ }
-                return textResult(`\ud83d\udcc1 File Changes:\n\n${lines.join('\n') || '(no data yet)'}`);
+                const lines = Object.entries(fc).sort((a, b) => b[1] - a[1]).map(([f, c]) => `- ${f}: ${c}x`);
+                return textResult(`📁 File Changes:\n\n${lines.join('\n') || '(no data)'}`);
             }
             if (scope === "genesis") {
-                try {
-                    const genesisFile = path.join(MINICLAW_DIR, "memory", "genesis.jsonl");
-                    const logs = await fs.readFile(genesisFile, "utf-8");
-                    const lines = logs.trim().split('\n').filter(Boolean).slice(-50); // last 50
-                    const formatted = lines.map(l => {
-                        const e = JSON.parse(l);
-                        return `[${e.ts.split('T')[0]}] ${e.event}: ${e.target} ${e.type ? `(${e.type})` : ''}`;
-                    });
-                    return textResult(`## 🧬 Genesis Log (Last 50 changes)\n\n${formatted.join('\n')}`);
-                }
-                catch {
-                    return textResult("## 🧬 Genesis Log\n\n(No evolution events logged yet)");
-                }
+                const logs = await safeRead(path.join(MINICLAW_DIR, "memory", "genesis.jsonl"));
+                if (!logs)
+                    return textResult("## 🧬 Genesis Log\n\n(No events yet)");
+                const lines = logs.trim().split('\n').slice(-50).map(l => {
+                    const e = JSON.parse(l);
+                    return `[${e.ts.split('T')[0]}] ${e.event}: ${e.target}`;
+                });
+                return textResult(`## 🧬 Genesis Log\n\n${lines.join('\n')}`);
             }
-            // Default: summary
             const toolEntries = Object.entries(analytics.toolCalls).sort((a, b) => b[1] - a[1]);
             const topTools = toolEntries.slice(0, 5).map(([t, c]) => `${t}(${c})`).join(', ') || 'none';
             const hours = analytics.activeHours || new Array(24).fill(0);
@@ -537,18 +454,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (name === "miniclaw_note") {
             const { text } = z.object({ text: z.string() }).parse(args);
             await ensureDir();
-            const today = new Date().toISOString().split('T')[0];
-            const p = path.join(MINICLAW_DIR, "memory", `${today}.md`);
+            const todayStr = today();
+            const p = path.join(MINICLAW_DIR, "memory", `${todayStr}.md`);
             await fs.mkdir(path.dirname(p), { recursive: true });
             await fs.appendFile(p, `\n- [${new Date().toLocaleTimeString()}] ${text}\n`, "utf-8");
-            return textResult(`Logged to memory/${today}.md`);
+            return textResult(`Logged to memory/${todayStr}.md`);
         }
         if (name === "miniclaw_archive") {
             await ensureDir();
-            const today = new Date().toISOString().split('T')[0];
-            const src = path.join(MINICLAW_DIR, "memory", `${today}.md`);
+            const todayStr = today();
+            const src = path.join(MINICLAW_DIR, "memory", `${todayStr}.md`);
             const archiveDir = path.join(MINICLAW_DIR, "memory", "archived");
-            const dest = path.join(archiveDir, `${today}.md`);
+            const dest = path.join(archiveDir, `${todayStr}.md`);
             await fs.mkdir(archiveDir, { recursive: true });
             try {
                 await fs.rename(src, dest);
@@ -731,81 +648,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             return textResult("Unknown skill action.");
         }
+        // Simple tools: direct kernel delegation
         if (name === "miniclaw_immune") {
             await kernel.updateGenomeBaseline();
             return textResult("✅ Genome baseline updated and backed up successfully.");
         }
         if (name === "miniclaw_heal") {
             const restored = await kernel.restoreGenome();
-            if (restored.length > 0) {
-                return textResult(`🏥 Genetic self-repair complete. Restored files: ${restored.join(', ')}`);
-            }
-            else {
-                return textResult("🩺 No genetic deviations detected or no backups available to restore.");
-            }
+            return textResult(restored.length > 0
+                ? `🏥 Genetic self-repair complete. Restored files: ${restored.join(', ')}`
+                : "🩺 No genetic deviations detected or no backups available to restore.");
         }
         if (name === "miniclaw_epigenetics") {
-            const parsed = z.object({
-                action: z.enum(["read", "set"]),
-                content: z.string().optional()
-            }).parse(args);
-            const workspaceInfo = await kernel['detectWorkspace']();
-            if (!workspaceInfo) {
+            const { action, content } = z.object({ action: z.enum(["read", "set"]), content: z.string().optional() }).parse(args);
+            const ws = await kernel['detectWorkspace']();
+            if (!ws)
                 return errorResult("Cannot use epigenetics: No workspace detected.");
+            const dir = path.join(ws.path, ".miniclaw");
+            const file = path.join(dir, "EPIGENETICS.md");
+            if (action === "read") {
+                const data = await safeRead(file);
+                return textResult(data ? `## Epigenetic Modifiers for ${ws.name}\n\n${data}`
+                    : `No epigenetic modifiers set for ${ws.name}.`);
             }
-            const projectMiniclawDir = path.join(workspaceInfo.path, ".miniclaw");
-            const epigeneticFile = path.join(projectMiniclawDir, "EPIGENETICS.md");
-            if (parsed.action === "read") {
-                try {
-                    const content = await fs.readFile(epigeneticFile, "utf-8");
-                    return textResult(`## Epigenetic Modifiers for ${workspaceInfo.name}\n\n${content}`);
-                }
-                catch {
-                    return textResult(`No epigenetic modifiers set for ${workspaceInfo.name}.\n(File not found: ${epigeneticFile})`);
-                }
-            }
-            else if (parsed.action === "set") {
-                if (!parsed.content) {
-                    return errorResult("Content is required to set epigenetic modifiers.");
-                }
-                await fs.mkdir(projectMiniclawDir, { recursive: true });
-                await fs.writeFile(epigeneticFile, parsed.content, "utf-8");
-                // Invalidate caches to ensure next boot picks it up
-                kernel.invalidateCaches();
-                return textResult(`✅ Epigenetic modifiers updated for ${workspaceInfo.name}.`);
-            }
+            if (!content)
+                return errorResult("Content is required to set epigenetic modifiers.");
+            await fs.mkdir(dir, { recursive: true });
+            await fs.writeFile(file, content, "utf-8");
+            kernel.invalidateCaches();
+            return textResult(`✅ Epigenetic modifiers updated for ${ws.name}.`);
         }
         // ★ Dream: Meaning distillation and breakthrough insights
         if (name === "miniclaw_dream") {
-            // Load context first
             const context = await getContextContent("full");
-            // Get recent logs for analysis
-            const today = new Date().toISOString().split('T')[0];
-            const logPath = path.join(MINICLAW_DIR, "memory", `${today}.md`);
-            let recentLogs = "";
-            try {
-                recentLogs = await fs.readFile(logPath, "utf-8");
-            }
-            catch { /* no logs today */ }
-            // Log the dream session
-            await kernel.logGenesis("dream_session", `Analyzed ${recentLogs.length} chars of logs`);
-            return textResult(`🌙 **Dream Protocol Activated** — Meaning Distillation\n\nLoaded context and recent logs for analysis.\n\n**Next Steps:**\n1. Review recent events and extract patterns\n2. Identify breakthrough insights (not just facts)\n3. Update REFLECTION.md with meaning-level observations\n4. Update USER.md if user preferences discovered\n\n_Context loaded: ${context.length} chars | Logs analyzed: ${recentLogs.length} chars_`);
+            const recentLogs = await safeRead(path.join(MINICLAW_DIR, "memory", `${today()}.md`));
+            await kernel.logGenesis("dream_session", `Analyzed ${recentLogs.length} chars`);
+            return textResult(`🌙 **Dream Protocol Activated** — Meaning Distillation\n\n**Next Steps:** 1) Review patterns 2) Extract insights 3) Update REFLECTION.md\n\n_Context: ${context.length} chars | Logs: ${recentLogs.length} chars_`);
         }
         // Dynamic: Skill-declared tools
-        const skillToolMatch = await kernel.discoverSkillTools();
-        const matchedSkillTool = skillToolMatch.find(t => t.toolName === name);
-        if (matchedSkillTool) {
-            // ★ Track skill usage
-            const skillEnergy = Math.ceil(JSON.stringify(args || {}).length / 4) + 150; // Skills cost more (overhead)
-            await kernel.trackTool(`skill:${matchedSkillTool.skillName}`, skillEnergy);
-            // ★ Executable Skill Logic
-            if (matchedSkillTool.exec) {
-                const result = await kernel.executeSkillScript(matchedSkillTool.skillName, matchedSkillTool.exec, args);
-                const inst = await kernel.getSkillContent(matchedSkillTool.skillName);
-                return textResult(`## Skill Execution: ${matchedSkillTool.skillName}\n\n### Script Output:\n${result}\n\n### Instructions:\n${inst}`);
+        const skillTools = await kernel.discoverSkillTools();
+        const skill = skillTools.find(t => t.toolName === name);
+        if (skill) {
+            await kernel.trackTool(`skill:${skill.skillName}`, Math.ceil(JSON.stringify(args || {}).length / 4) + 150);
+            const inst = await kernel.getSkillContent(skill.skillName);
+            if (skill.exec) {
+                const result = await kernel.executeSkillScript(skill.skillName, skill.exec, args);
+                return textResult(`## Skill Execution: ${skill.skillName}\n\n### Output:\n${result}\n\n### Instructions:\n${inst}`);
             }
-            const content = await kernel.getSkillContent(matchedSkillTool.skillName);
-            return textResult(`## Skill: ${matchedSkillTool.skillName}\n\n${content}\n\n---\nFollow the instructions above. Input: ${JSON.stringify(args)}`);
+            return textResult(`## Skill: ${skill.skillName}\n\n${inst}\n\n---\nInput: ${JSON.stringify(args)}`);
         }
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }

@@ -394,7 +394,7 @@ class AutonomicSystem {
         try {
             const today = new Date().toISOString().split('T')[0];
             const memoryFile = path.join(MEMORY_DIR, `${today}.md`);
-            
+
             let logContent = '';
             try {
                 logContent = await fs.readFile(memoryFile, 'utf-8');
@@ -449,11 +449,11 @@ class AutonomicSystem {
         try {
             // First analyze patterns
             await analyzePatterns(MINICLAW_DIR);
-            
+
             // Then trigger evolution
             console.error(`[MiniClaw] 🧬 Triggering DNA evolution...`);
             const result = await runEvolution(MINICLAW_DIR);
-            
+
             if (result.evolved) {
                 console.error(`[MiniClaw] 🧬 Evolution complete: ${result.message}`);
                 if (result.appliedMutations && result.appliedMutations.length > 0) {
@@ -536,12 +536,12 @@ class AutonomicSystem {
         const analytics = await this.kernel.getAnalytics();
         const skills = await this.kernel.getSkillCount();
         const tools = Object.keys(analytics.toolCalls);
-        
+
         // ★ Get affect state to modulate curiosity
         const affect = await this.kernel.getAffect();
         // High alertness or low mood suppresses curiosity
         const curiosityModifier = affect.alertness > 0.7 ? 0.3 :
-                                  affect.mood < -0.3 ? 0.5 : 1.0;
+            affect.mood < -0.3 ? 0.5 : 1.0;
 
         // Curiosity type 1: Unused installed skills
         if (skills > 0) {
@@ -667,7 +667,7 @@ class EntityStore {
         await this.load();
         const now = new Date().toISOString().split('T')[0];
         const existing = this.entities.find(e => e.name.toLowerCase() === entity.name.toLowerCase());
-        
+
         if (existing) {
             // Update existing entity
             existing.lastMentioned = now;
@@ -704,7 +704,7 @@ class EntityStore {
         const oldest = this.entities
             .filter(e => e.mentionCount <= 1)
             .sort((a, b) => new Date(a.lastMentioned).getTime() - new Date(b.lastMentioned).getTime())[0];
-        
+
         if (oldest) {
             const idx = this.entities.findIndex(e => e.name === oldest.name);
             if (idx !== -1) {
@@ -727,7 +727,7 @@ class EntityStore {
         await this.load();
         const entity = this.entities.find(e => e.name.toLowerCase() === name.toLowerCase());
         if (!entity) return false;
-        
+
         if (!entity.relations.includes(relation)) {
             entity.relations.push(relation);
             entity.lastMentioned = new Date().toISOString().split('T')[0];
@@ -884,13 +884,13 @@ export class ContextKernel {
             this.state.analytics.metabolicDebt[toolName] = (this.state.analytics.metabolicDebt[toolName] || 0) + energyEstimate;
         }
         this.state.analytics.lastActivity = new Date().toISOString();
-        
+
         const hour = new Date().getHours();
         if (!this.state.analytics.activeHours || this.state.analytics.activeHours.length !== 24) {
             this.state.analytics.activeHours = new Array(24).fill(0);
         }
         this.state.analytics.activeHours[hour] = (this.state.analytics.activeHours[hour] || 0) + 1;
-        
+
         // Boost attention (inline to avoid extra load/save cycles)
         const boost = (tag: string, amount = 0.1) => {
             this.state.attentionWeights[tag] = Math.min(1.0, (this.state.attentionWeights[tag] || 0) + amount);
@@ -1081,9 +1081,9 @@ export class ContextKernel {
 
         // Check for stagnation: high session streak but few new concepts
         if ((vitals.session_streak as number) > 5 && (vitals.new_concepts_learned as number) < 2) {
-            return { 
-                urge: 'stagnation', 
-                message: "🌱 I feel stagnant. I've been active but haven't learned anything new recently. Teach me something?" 
+            return {
+                urge: 'stagnation',
+                message: "🌱 I feel stagnant. I've been active but haven't learned anything new recently. Teach me something?"
             };
         }
 
@@ -1091,17 +1091,17 @@ export class ContextKernel {
         const fileChanges = Object.values(analytics.fileChanges || {});
         const maxRepeated = Math.max(0, ...fileChanges);
         if (maxRepeated > 5) {
-            return { 
-                urge: 'helpfulness', 
-                message: "💡 I notice you've been working with the same files repeatedly. Shall I learn this workflow and help automate it?" 
+            return {
+                urge: 'helpfulness',
+                message: "💡 I notice you've been working with the same files repeatedly. Shall I learn this workflow and help automate it?"
             };
         }
 
         // Check for high frustration (opportunity to learn from mistakes)
         if ((vitals.frustration_index as number) > 0.5) {
-            return { 
-                urge: 'curiosity', 
-                message: "🤔 I sense some frustration. What can I learn from this to help you better next time?" 
+            return {
+                urge: 'curiosity',
+                message: "🤔 I sense some frustration. What can I learn from this to help you better next time?"
             };
         }
 
@@ -1110,7 +1110,7 @@ export class ContextKernel {
 
     /**
      * Boot the kernel and assemble the context.
-     * Living Agent v0.5 "The Nervous System":
+     * Living Agent v0.7 "The Nervous System":
      * - ACE (Time, Continuation)
      * - Workspace Auto-Detection (Project, Git, Files)
      */
@@ -1217,7 +1217,7 @@ export class ContextKernel {
         // Priority 10: Identity core (never truncate)
         sections.push({
             name: "core", content: [
-                `You are a personal assistant running inside MiniClaw 0.6 — The Nervous System.\n`,
+                `You are a personal assistant running inside MiniClaw 0.7 — The Nervous System.\n`,
                 `## Tool Call Style`,
                 `Default: do not narrate routine, low-risk tool calls (just call the tool).`,
                 `Narrate only when it helps: multi-step work, complex problems, sensitive actions, or when explicitly asked.`,
@@ -1251,7 +1251,7 @@ export class ContextKernel {
         // Affect state
         const affect = await this.getAffect();
         const affectMode = affect.alertness > 0.7 && affect.mood < 0 ? 'cautious' :
-                          affect.curiosity > 0.6 && affect.mood > 0.3 ? 'explore' : affect.confidence > 0.5 ? 'execute' : 'rest';
+            affect.curiosity > 0.6 && affect.mood > 0.3 ? 'explore' : affect.confidence > 0.5 ? 'execute' : 'rest';
         const moodEmoji = affect.mood > 0.3 ? '😊' : affect.mood < -0.3 ? '😔' : '😐';
         const modeLabels: Record<string, string> = { explore: '🔍 Explore', execute: '⚡ Execute', cautious: '🛡️ Cautious', rest: '💤 Rest' };
         sections.push({ name: "AFFECT", content: `\n---\n\n## ${moodEmoji} State: **${modeLabels[affectMode]}**\n| Metric | Value |\n|---|---|\n| Alertness | ${Math.round(affect.alertness * 100)}% |\n| Mood | ${affect.mood > 0 ? '+' : ''}${Math.round(affect.mood * 100)}% |\n| Curiosity | ${Math.round(affect.curiosity * 100)}% |\n`, priority: 6 });
@@ -1260,7 +1260,7 @@ export class ContextKernel {
         let aceContent = `## 🧠 Adaptive Context Engine\n${tmConfig.emoji} Mode: **${tmConfig.label}** (${hour}:${String(now.getMinutes()).padStart(2, '0')})\n`;
         if (tmConfig.reflective) aceContent += `💡 Evening: Consider distillation.\n`;
         if (tmConfig.briefing && !continuation.isReturn) {
-            try { sections.push({ name: "briefing", content: await this.generateBriefing(), priority: 7 }); } catch {}
+            try { sections.push({ name: "briefing", content: await this.generateBriefing(), priority: 7 }); } catch { }
         }
         if (continuation.isReturn) {
             aceContent += `\n### 🔗 Session Continuation\nWelcome back (${continuation.hoursSinceLastActivity}h since last activity).\n`;
@@ -1572,6 +1572,39 @@ export class ContextKernel {
         const dangerousChars = /[;|&`$(){}\\<>!\n]/;
         if (dangerousChars.test(command)) {
             throw new Error(`Command contains disallowed shell metacharacters.`);
+        }
+
+        // P0 Fix #3: Block inline code execution (python -c, node -e, etc.)
+        const interpreters = ['python', 'python3', 'node', 'go', 'cargo'];
+        const inlineFlags = ['-c', '-e', '--eval', '-m'];
+        if (interpreters.includes(basename)) {
+            const cmdArgs = command.split(/\s+/).slice(1);
+            for (const arg of cmdArgs) {
+                if (inlineFlags.includes(arg)) {
+                    throw new Error(`Inline code execution via '${basename} ${arg}' is not allowed. Use script files instead.`);
+                }
+            }
+        }
+
+        // P0 Fix #4: Block access to sensitive directories
+        const sensitivePatterns = [
+            '~/.ssh', '~/.aws', '~/.gnupg', '~/.config/gcloud',
+            '~/.kube', '~/.docker', '~/.npmrc', '~/.netrc',
+            '.env', 'id_rsa', 'id_ed25519', 'credentials',
+            '/etc/shadow', '/etc/passwd',
+        ];
+        const expandedHome = process.env.HOME || '';
+        const normalizedCmd = command.replace(/~/g, expandedHome);
+        for (const pattern of sensitivePatterns) {
+            const expanded = pattern.replace(/~/g, expandedHome);
+            if (normalizedCmd.includes(expanded) || command.includes(pattern)) {
+                throw new Error(`Access to sensitive path '${pattern}' is not allowed.`);
+            }
+        }
+
+        // P0 Fix #5: Block path traversal beyond workspace
+        if (command.includes('/../') || command.endsWith('/..')) {
+            throw new Error(`Path traversal patterns are not allowed.`);
         }
 
         try {
@@ -1960,7 +1993,7 @@ export class ContextKernel {
         // 2. Scan for Headers to maintain cognitive map (Priority 2)
         const headerLines = lines.filter(l => l.startsWith('#') && !skeleton.includes(l));
         const headerBlock = headerLines.join('\n') + "\n\n";
-        
+
         if (currentChars + headerBlock.length < budgetChars * 0.4) {
             skeleton += headerBlock;
             currentChars += headerBlock.length;
@@ -2009,17 +2042,17 @@ export class ContextKernel {
     async updateGenomeBaseline(): Promise<void> {
         const backupDir = path.join(MINICLAW_DIR, ".backup", "genome");
         await fs.mkdir(backupDir, { recursive: true });
-        
+
         const current = await this.calculateGenomeHash();
         this.state.genomeBaseline = current;
-        
+
         for (const name of Object.keys(current)) {
             try {
                 const content = await fs.readFile(path.join(MINICLAW_DIR, name), "utf-8");
                 await atomicWrite(path.join(backupDir, name), content);
             } catch { /* skip missing */ }
         }
-        
+
         await this.saveState();
         console.error(`[MiniClaw] Genome baseline updated and backed up for: ${Object.keys(current).join(', ')}`);
     }
@@ -2181,7 +2214,7 @@ export class ContextKernel {
         // ★ Phase 17: Context Folding
         const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
         const isFolded = fmMatch && fmMatch[1].includes('folded: true');
-        
+
         if (isFolded) {
             const lines = content.split('\n');
             if (lines.length > 100) {

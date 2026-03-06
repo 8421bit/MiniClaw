@@ -9,6 +9,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { today, nowIso, safeRead, safeWrite, safeReadJson, hoursSince } from "./utils.js";
 // === Configuration ===
 const MIN_CONFIDENCE = 0.75;
 const MIN_PATTERNS = 2;
@@ -31,20 +32,16 @@ function calculateSimilarity(str1, str2) {
 function mergeSimilarPatterns(patterns) {
     if (patterns.length === 1)
         return patterns[0];
-    const keyTerms = patterns.map(p => {
-        const words = p.description.toLowerCase().split(/\s+/);
-        return words.filter(w => w.length > 3);
-    });
-    const commonTerms = keyTerms[0].filter(term => keyTerms.every(terms => terms.includes(term)));
+    // Find common terms across all patterns
+    const allTerms = patterns.map(p => p.description.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+    const commonTerms = allTerms[0].filter(term => allTerms.every(terms => terms.includes(term)));
     const avgConfidence = patterns.reduce((sum, p) => sum + p.confidence, 0) / patterns.length;
-    const maxConfidence = Math.max(...patterns.map(p => p.confidence));
-    const mergedDesc = commonTerms.length > 0
-        ? `${patterns[0].description.split(':')[0]}: ${commonTerms.join(', ')} (merged from ${patterns.length} observations)`
-        : `${patterns[0].description} (and ${patterns.length - 1} similar patterns)`;
     return {
         type: patterns[0].type,
-        confidence: maxConfidence,
-        description: mergedDesc,
+        confidence: Math.max(...patterns.map(p => p.confidence)),
+        description: commonTerms.length > 0
+            ? `${patterns[0].description.split(':')[0]}: ${commonTerms.join(', ')} (merged from ${patterns.length} observations)`
+            : `${patterns[0].description} (and ${patterns.length - 1} similar)`,
         suggestion: patterns[0].suggestion,
         mergedCount: patterns.length,
         avgConfidence
@@ -53,32 +50,18 @@ function mergeSimilarPatterns(patterns) {
 // === DNA Update Functions ===
 /** Generic file append with deduplication */
 async function appendIfNew(filePath, line, dedupeKey) {
-    try {
-        let content = await fs.readFile(filePath, "utf-8");
-        if (content.includes(dedupeKey))
-            return false;
-        await fs.writeFile(filePath, content + `\n${line}`, "utf-8");
-        return true;
-    }
-    catch {
+    const content = await safeRead(filePath);
+    if (content.includes(dedupeKey))
         return false;
-    }
+    return safeWrite(filePath, content + `\n${line}`).then(() => true);
 }
 // === Epigenetic Functions ===
 // Methylation: Semi-permanent adaptation without changing DNA sequence
 async function loadMethylatedTraits(miniclawDir) {
-    const methylationFile = path.join(miniclawDir, "methylation.json");
-    try {
-        const raw = await fs.readFile(methylationFile, "utf-8");
-        return JSON.parse(raw);
-    }
-    catch {
-        return [];
-    }
+    return safeReadJson(path.join(miniclawDir, "methylation.json"), []);
 }
 async function saveMethylatedTraits(miniclawDir, traits) {
-    const methylationFile = path.join(miniclawDir, "methylation.json");
-    await fs.writeFile(methylationFile, JSON.stringify(traits, null, 2), "utf-8");
+    await safeWrite(path.join(miniclawDir, "methylation.json"), JSON.stringify(traits, null, 2));
 }
 async function getLastMethylationTime(miniclawDir) {
     const methylationFile = path.join(miniclawDir, "methylation.json");
@@ -126,98 +109,73 @@ async function shouldMethylate(pattern, existingTraits) {
 async function methylateTrait(miniclawDir, trait, value, pattern, appliedMutations) {
     // Check cooldown
     const lastMethylation = await getLastMethylationTime(miniclawDir);
-    const hoursSince = (Date.now() - lastMethylation) / (1000 * 60 * 60);
-    if (hoursSince < METHYLATION_COOLDOWN_HOURS) {
-        console.error(`[MiniClaw] 🧬 Methylation cooldown: ${Math.round(METHYLATION_COOLDOWN_HOURS - hoursSince)}h remaining`);
+    const hrsSince = (Date.now() - lastMethylation) / (1000 * 60 * 60);
+    if (hrsSince < METHYLATION_COOLDOWN_HOURS) {
+        console.error(`[MiniClaw] 🧬 Methylation cooldown: ${Math.round(METHYLATION_COOLDOWN_HOURS - hrsSince)}h remaining`);
         return;
     }
-    // Load existing traits
     const traits = await loadMethylatedTraits(miniclawDir);
-    // Add or update trait
-    const existingIndex = traits.findIndex(t => t.trait === trait);
-    const newTrait = {
-        trait,
-        value,
-        source: pattern.description,
-        timestamp: new Date().toISOString(),
-        patternCount: pattern.mergedCount || 1,
-        stability: Math.min(0.95, 0.5 + (pattern.mergedCount || 1) * 0.05),
-    };
-    if (existingIndex >= 0) {
-        traits[existingIndex] = newTrait;
-    }
-    else {
-        traits.push(newTrait);
-    }
+    const stability = Math.min(0.95, 0.5 + (pattern.mergedCount || 1) * 0.05);
+    const newTrait = { trait, value, source: pattern.description, timestamp: nowIso(), patternCount: pattern.mergedCount || 1, stability };
+    const idx = traits.findIndex(t => t.trait === trait);
+    idx >= 0 ? traits[idx] = newTrait : traits.push(newTrait);
     await saveMethylatedTraits(miniclawDir, traits);
-    // Update SOUL.md with methylated trait (append to end, don't replace)
+    // Update SOUL.md
     const soulPath = path.join(miniclawDir, "SOUL.md");
-    try {
-        let soulContent = await fs.readFile(soulPath, "utf-8");
-        const methylationNote = `\n<!-- [METHYLATED] ${trait}: ${value} (stability: ${Math.round(newTrait.stability * 100)}%) -->`;
-        // Remove old methylation notes for this trait
-        soulContent = soulContent.replace(new RegExp(`\\n<!-- \\[METHYLATED\\] ${trait}: .*? -->`, 'g'), '');
-        // Add new note
-        soulContent += methylationNote;
-        await fs.writeFile(soulPath, soulContent, "utf-8");
-        appliedMutations.push({
-            chromosome: "Chr-2 (SOUL)",
-            target: "SOUL.md",
-            change: `Methylated ${trait} → ${value}`,
-            confidence: Math.round(newTrait.stability * 100),
-        });
-        console.error(`[MiniClaw] 🧬 Methylation applied: ${trait} → ${value} (${Math.round(newTrait.stability * 100)}% stable)`);
-    }
-    catch (e) {
-        console.error(`[MiniClaw] Methylation write failed: ${e}`);
-    }
+    let soulContent = await safeRead(soulPath);
+    if (!soulContent)
+        return;
+    const note = `\n<!-- [METHYLATED] ${trait}: ${value} (stability: ${Math.round(stability * 100)}%) -->`;
+    soulContent = soulContent.replace(new RegExp(`\\n<!-- \\[METHYLATED\\] ${trait}: .*? -->`, 'g'), '') + note;
+    await safeWrite(soulPath, soulContent);
+    appliedMutations.push({ chromosome: "Chr-2 (SOUL)", target: "SOUL.md", change: `Methylated ${trait} → ${value}`, confidence: Math.round(stability * 100) });
+    console.error(`[MiniClaw] 🧬 Methylation applied: ${trait} → ${value} (${Math.round(stability * 100)}% stable)`);
 }
 // Get current methylated traits for context assembly
 export async function getMethylatedTraits(miniclawDir) {
     return loadMethylatedTraits(miniclawDir);
 }
 async function smartUpdateDNA(miniclawDir, targetFile, pattern, appliedMutations) {
-    try {
-        const filePath = path.join(miniclawDir, targetFile);
-        let content = await fs.readFile(filePath, "utf-8");
-        const keyConcept = pattern.description.substring(0, 50).replace(/\s+/g, ' ').trim();
-        const existingLines = content.split('\n');
-        let similarLineIndex = -1;
-        let existingConfidence = 0;
-        for (let i = 0; i < existingLines.length; i++) {
-            const line = existingLines[i];
-            if (line.includes('[AUTO-EVOLVED]')) {
-                const similarity = calculateSimilarity(line, keyConcept);
-                if (similarity > 0.6) {
-                    similarLineIndex = i;
-                    const confidenceMatch = line.match(/confidence:\s*([\d.]+)/);
-                    if (confidenceMatch)
-                        existingConfidence = parseFloat(confidenceMatch[1]);
-                    break;
-                }
+    const filePath = path.join(miniclawDir, targetFile);
+    const content = await safeRead(filePath);
+    if (!content)
+        return;
+    const keyConcept = pattern.description.substring(0, 50).replace(/\s+/g, ' ').trim();
+    const existingLines = content.split('\n');
+    let similarLineIndex = -1;
+    let existingConfidence = 0;
+    for (let i = 0; i < existingLines.length; i++) {
+        const line = existingLines[i];
+        if (line.includes('[AUTO-EVOLVED]')) {
+            const similarity = calculateSimilarity(line, keyConcept);
+            if (similarity > 0.6) {
+                similarLineIndex = i;
+                const confidenceMatch = line.match(/confidence:\s*([\d.]+)/);
+                if (confidenceMatch)
+                    existingConfidence = parseFloat(confidenceMatch[1]);
+                break;
             }
-        }
-        const timestamp = new Date().toISOString().split('T')[0];
-        const newConfidence = Math.round((pattern.confidence || 0.7) * 100);
-        const detectionCount = pattern.mergedCount || 1;
-        if (similarLineIndex >= 0) {
-            if (newConfidence > existingConfidence) {
-                existingLines[similarLineIndex] = `- [AUTO-EVOLVED] ${pattern.description} (confidence: ${newConfidence}%, detections: ${detectionCount}, updated: ${timestamp})`;
-                await fs.writeFile(filePath, existingLines.join('\n'), "utf-8");
-                appliedMutations.push({ target: targetFile, change: `Updated: ${pattern.description}`, confidence: newConfidence });
-            }
-        }
-        else {
-            const newLine = `- [AUTO-EVOLVED] ${pattern.description} (confidence: ${newConfidence}%, detections: ${detectionCount}, first: ${timestamp})`;
-            await fs.writeFile(filePath, content + `\n${newLine}`, "utf-8");
-            appliedMutations.push({ target: targetFile, change: pattern.description, confidence: newConfidence });
         }
     }
-    catch { /* ignore */ }
+    const timestamp = today();
+    const newConfidence = Math.round((pattern.confidence || 0.7) * 100);
+    const detectionCount = pattern.mergedCount || 1;
+    const newLine = `- [AUTO-EVOLVED] ${pattern.description} (confidence: ${newConfidence}%, detections: ${detectionCount}, ${similarLineIndex >= 0 ? 'updated' : 'first'}: ${timestamp})`;
+    if (similarLineIndex >= 0) {
+        if (newConfidence <= existingConfidence)
+            return;
+        existingLines[similarLineIndex] = newLine;
+        await safeWrite(filePath, existingLines.join('\n'));
+        appliedMutations.push({ target: targetFile, change: `Updated: ${pattern.description}`, confidence: newConfidence });
+    }
+    else {
+        await safeWrite(filePath, content + `\n${newLine}`);
+        appliedMutations.push({ target: targetFile, change: pattern.description, confidence: newConfidence });
+    }
 }
 async function updateReflection(miniclawDir, reflectionType, description, appliedMutations) {
     const filePath = path.join(miniclawDir, "REFLECTION.md");
-    const timestamp = new Date().toISOString().split('T')[0];
+    const timestamp = today();
     const line = `- [AUTO-EVOLVED] ${reflectionType}: ${description} (reflected: ${timestamp})`;
     if (await appendIfNew(filePath, line, description.substring(0, 40))) {
         appliedMutations.push({ chromosome: "Chr-7", target: "REFLECTION.md", change: `${reflectionType}: ${description}` });
@@ -244,7 +202,7 @@ async function checkMilestones(miniclawDir, state, appliedMutations) {
     if (state.totalEvolutions === 10)
         milestones.push("10th Generation - Stable Learning");
     const filePath = path.join(miniclawDir, "HORIZONS.md");
-    const timestamp = new Date().toISOString().split('T')[0];
+    const timestamp = today();
     for (const milestone of milestones) {
         const line = `- [AUTO-EVOLVED] Milestone: ${milestone} (G${state.totalEvolutions}, ${timestamp})`;
         if (await appendIfNew(filePath, line, milestone)) {
@@ -295,88 +253,54 @@ export async function analyzePatterns(miniclawDir) {
             suggestion: "Consider creating skills for frequently asked questions"
         });
     }
+    // Pattern detection helper
+    const addPattern = (type, confidence, desc, suggestion) => {
+        patterns.push({ type, confidence, description: desc, suggestion });
+    };
     // Tool usage patterns
     const toolMatches = [...combined.matchAll(/miniclaw_[a-z_]+/g)];
     const toolCounts = {};
     for (const m of toolMatches)
         toolCounts[m[0]] = (toolCounts[m[0]] || 0) + 1;
     const frequentTools = Object.entries(toolCounts).filter(([, c]) => c > 3);
-    if (frequentTools.length > 0) {
-        patterns.push({
-            type: "preference",
-            confidence: 0.8,
-            description: `Frequent tool usage: ${frequentTools.map(([t]) => t).join(", ")}`,
-            suggestion: "User has clear tool preferences"
-        });
-    }
+    if (frequentTools.length > 0)
+        addPattern("preference", 0.8, `Frequent tools: ${frequentTools.map(([t]) => t).join(", ")}`);
     // Temporal patterns
     const timestamps = [...combined.matchAll(/\[(\d{2}):(\d{2})/g)];
     if (timestamps.length > 5) {
-        const hours = timestamps.map(m => parseInt(m[1]));
         const hourCounts = {};
-        for (const h of hours)
-            hourCounts[h] = (hourCounts[h] || 0) + 1;
-        const peakHour = Object.entries(hourCounts).sort((a, b) => Number(b[1]) - Number(a[1]))[0];
-        if (peakHour && Number(peakHour[1]) > 3) {
-            patterns.push({
-                type: "temporal",
-                confidence: 0.75,
-                description: `Peak activity at ${peakHour[0]}:00`,
-                suggestion: "Schedule intensive tasks during active hours"
-            });
-        }
+        for (const m of timestamps)
+            hourCounts[parseInt(m[1])] = (hourCounts[parseInt(m[1])] || 0) + 1;
+        const peak = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
+        if (peak && peak[1] > 3)
+            addPattern("temporal", 0.75, `Peak activity at ${peak[0]}:00`);
     }
     // Workflow patterns
-    const workflowPatterns = detectWorkflowPatterns(combined);
-    if (workflowPatterns.length > 0) {
-        patterns.push({
-            type: "workflow",
-            confidence: 0.7,
-            description: `Repetitive workflow: ${workflowPatterns[0].name}`,
-            suggestion: `Consider automating: ${workflowPatterns[0].steps.join(" → ")}`
-        });
-    }
+    const workflows = detectWorkflowPatterns(combined);
+    if (workflows.length > 0)
+        addPattern("workflow", 0.7, `Workflow: ${workflows[0].name}`);
     // Sentiment patterns
-    const positiveFeedback = [...combined.matchAll(/(谢谢|感谢|很好|不错|完美|awesome|thanks|great|perfect)/gi)];
-    const negativeFeedback = [...combined.matchAll(/(不对|错了|不好|不行|糟糕|wrong|bad|terrible)/gi)];
-    if (positiveFeedback.length > 3 || negativeFeedback.length > 3) {
-        const sentiment = positiveFeedback.length > negativeFeedback.length ? "positive" : "negative";
-        patterns.push({
-            type: "sentiment",
-            confidence: 0.65,
-            description: `User shows ${sentiment} feedback trend`,
-            suggestion: sentiment === "positive" ? "Continue current approach" : "Adjust communication style"
-        });
-    }
+    const pos = [...combined.matchAll(/(谢谢|感谢|很好|不错|perfect|great)/gi)].length;
+    const neg = [...combined.matchAll(/(不对|错了|糟糕|wrong|bad)/gi)].length;
+    if (pos > 3 || neg > 3)
+        addPattern("sentiment", 0.65, `Feedback: ${pos > neg ? 'positive' : 'negative'}`);
     // Error patterns
-    const errorPatterns = [...combined.matchAll(/(error|failed|exception|crash|timeout)/gi)];
-    if (errorPatterns.length > 3) {
-        patterns.push({
-            type: "error_pattern",
-            confidence: 0.7,
-            description: `Frequent errors: ${errorPatterns.length} instances`,
-            suggestion: "Review tool usage and error handling"
-        });
-    }
+    const errors = [...combined.matchAll(/(error|failed|exception|crash)/gi)].length;
+    if (errors > 3)
+        addPattern("error_pattern", 0.7, `${errors} errors detected`);
     // Save patterns
-    const patternsFile = path.join(miniclawDir, "observer-patterns.json");
-    await fs.writeFile(patternsFile, JSON.stringify({ timestamp: new Date().toISOString(), patterns }, null, 2));
+    await safeWrite(path.join(miniclawDir, "observer-patterns.json"), JSON.stringify({ timestamp: nowIso(), patterns }, null, 2));
     return patterns;
 }
 // === Evolution Trigger ===
 export async function triggerEvolution(miniclawDir) {
     const stateFile = path.join(miniclawDir, "observer-state.json");
     let state = { lastEvolution: null, totalEvolutions: 0 };
-    try {
-        state = JSON.parse(await fs.readFile(stateFile, "utf-8"));
-    }
-    catch { /* use default */ }
+    state = await safeReadJson(stateFile, state);
     // Check cooldown
-    if (state.lastEvolution) {
-        const hoursSince = (Date.now() - new Date(state.lastEvolution).getTime()) / (1000 * 60 * 60);
-        if (hoursSince < COOLDOWN_HOURS) {
-            return { evolved: false, message: `Cooldown active. ${Math.round(COOLDOWN_HOURS - hoursSince)} hours remaining.` };
-        }
+    if (state.lastEvolution && hoursSince(state.lastEvolution) < COOLDOWN_HOURS) {
+        const remaining = Math.round(COOLDOWN_HOURS - hoursSince(state.lastEvolution));
+        return { evolved: false, message: `Cooldown active. ${remaining} hours remaining.` };
     }
     // Load patterns
     const patternsFile = path.join(miniclawDir, "observer-patterns.json");
@@ -436,8 +360,8 @@ export async function triggerEvolution(miniclawDir) {
     // Check milestones
     await checkMilestones(miniclawDir, state, appliedMutations);
     // Log evolution
-    const today = new Date().toISOString().split('T')[0];
-    const memoryFile = path.join(miniclawDir, "memory", `${today}.md`);
+    const todayStr = today();
+    const memoryFile = path.join(miniclawDir, "memory", `${todayStr}.md`);
     const evolutionLog = `\n## 🧬 Evolution G${state.totalEvolutions}\n- Applied ${appliedMutations.length} mutations\n- Patterns: ${strongPatterns.map(p => p.type).join(", ")}\n`;
     await fs.appendFile(memoryFile, evolutionLog, "utf-8").catch(() => { });
     return {
