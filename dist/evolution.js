@@ -21,30 +21,24 @@ const METHYLATION_AGE_DAYS = 7; // Minimum age (days) for pattern to be consider
 const METHYLATION_COOLDOWN_HOURS = 48; // Cooldown between SOUL.md modifications
 // === Helper Functions ===
 function calculateSimilarity(str1, str2) {
-    const s1 = str1.toLowerCase();
-    const s2 = str2.toLowerCase();
-    const words1 = new Set(s1.split(/\s+/));
-    const words2 = new Set(s2.split(/\s+/));
-    const intersection = new Set([...words1].filter(w => words2.has(w)));
-    const union = new Set([...words1, ...words2]);
-    return intersection.size / union.size;
+    const w1 = new Set(str1.toLowerCase().split(/\s+/));
+    const w2 = new Set(str2.toLowerCase().split(/\s+/));
+    return new Set([...w1].filter(w => w2.has(w))).size / new Set([...w1, ...w2]).size;
 }
 function mergeSimilarPatterns(patterns) {
     if (patterns.length === 1)
         return patterns[0];
-    // Find common terms across all patterns
     const allTerms = patterns.map(p => p.description.toLowerCase().split(/\s+/).filter(w => w.length > 3));
-    const commonTerms = allTerms[0].filter(term => allTerms.every(terms => terms.includes(term)));
-    const avgConfidence = patterns.reduce((sum, p) => sum + p.confidence, 0) / patterns.length;
+    const common = allTerms[0].filter(t => allTerms.every(ts => ts.includes(t)));
     return {
         type: patterns[0].type,
         confidence: Math.max(...patterns.map(p => p.confidence)),
-        description: commonTerms.length > 0
-            ? `${patterns[0].description.split(':')[0]}: ${commonTerms.join(', ')} (merged from ${patterns.length} observations)`
+        description: common.length > 0
+            ? `${patterns[0].description.split(':')[0]}: ${common.join(', ')} (merged from ${patterns.length})`
             : `${patterns[0].description} (and ${patterns.length - 1} similar)`,
         suggestion: patterns[0].suggestion,
         mergedCount: patterns.length,
-        avgConfidence
+        avgConfidence: patterns.reduce((s, p) => s + p.confidence, 0) / patterns.length
     };
 }
 // === DNA Update Functions ===
@@ -231,65 +225,49 @@ function detectWorkflowPatterns(content) {
     return workflows;
 }
 export async function analyzePatterns(miniclawDir) {
-    const memoryDir = path.join(miniclawDir, "memory");
+    const memoryDir = path.join(miniclawDir, 'memory');
     const patterns = [];
     const files = await fs.readdir(memoryDir).catch(() => []);
-    const mdFiles = files.filter(f => f.endsWith(".md") && !f.includes("archived")).sort().slice(-7);
+    const mdFiles = files.filter(f => f.endsWith('.md') && !f.includes('archived')).sort().slice(-7);
     if (mdFiles.length === 0)
         return patterns;
-    const allContent = [];
-    for (const file of mdFiles) {
-        const content = await fs.readFile(path.join(memoryDir, file), "utf-8");
-        allContent.push(content);
-    }
-    const combined = allContent.join("\n");
-    // Repetition patterns
+    const combined = (await Promise.all(mdFiles.map(f => fs.readFile(path.join(memoryDir, f), 'utf-8')))).join('\n');
+    const add = (type, confidence, desc, suggestion) => patterns.push({ type, confidence, description: desc, suggestion });
+    // Question patterns
     const questions = [...combined.matchAll(/用户问|问|how to|怎么/gi)];
-    if (questions.length > 5) {
-        patterns.push({
-            type: "repetition",
-            confidence: Math.min(0.9, questions.length / 10),
-            description: `Detected ${questions.length} question patterns`,
-            suggestion: "Consider creating skills for frequently asked questions"
-        });
-    }
-    // Pattern detection helper
-    const addPattern = (type, confidence, desc, suggestion) => {
-        patterns.push({ type, confidence, description: desc, suggestion });
-    };
-    // Tool usage patterns
-    const toolMatches = [...combined.matchAll(/miniclaw_[a-z_]+/g)];
+    if (questions.length > 5)
+        add('repetition', Math.min(0.9, questions.length / 10), `${questions.length} question patterns`, 'Consider creating skills for FAQs');
+    // Tool usage
     const toolCounts = {};
-    for (const m of toolMatches)
+    for (const m of combined.matchAll(/miniclaw_[a-z_]+/g))
         toolCounts[m[0]] = (toolCounts[m[0]] || 0) + 1;
-    const frequentTools = Object.entries(toolCounts).filter(([, c]) => c > 3);
-    if (frequentTools.length > 0)
-        addPattern("preference", 0.8, `Frequent tools: ${frequentTools.map(([t]) => t).join(", ")}`);
-    // Temporal patterns
-    const timestamps = [...combined.matchAll(/\[(\d{2}):(\d{2})/g)];
-    if (timestamps.length > 5) {
-        const hourCounts = {};
-        for (const m of timestamps)
-            hourCounts[parseInt(m[1])] = (hourCounts[parseInt(m[1])] || 0) + 1;
-        const peak = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0];
-        if (peak && peak[1] > 3)
-            addPattern("temporal", 0.75, `Peak activity at ${peak[0]}:00`);
+    const freq = Object.entries(toolCounts).filter(([, c]) => c > 3);
+    if (freq.length > 0)
+        add('preference', 0.8, `Frequent tools: ${freq.map(([t]) => t).join(', ')}`);
+    // Temporal
+    const ts = [...combined.matchAll(/\[(\d{2}):(\d{2})/g)];
+    if (ts.length > 5) {
+        const hc = {};
+        for (const m of ts)
+            hc[parseInt(m[1])] = (hc[parseInt(m[1])] || 0) + 1;
+        const peak = Object.entries(hc).sort((a, b) => +b[1] - +a[1])[0];
+        if (peak && +peak[1] > 3)
+            add('temporal', 0.75, `Peak activity at ${peak[0]}:00`);
     }
-    // Workflow patterns
-    const workflows = detectWorkflowPatterns(combined);
-    if (workflows.length > 0)
-        addPattern("workflow", 0.7, `Workflow: ${workflows[0].name}`);
-    // Sentiment patterns
+    // Workflow
+    const wf = detectWorkflowPatterns(combined);
+    if (wf.length > 0)
+        add('workflow', 0.7, `Workflow: ${wf[0].name}`);
+    // Sentiment
     const pos = [...combined.matchAll(/(谢谢|感谢|很好|不错|perfect|great)/gi)].length;
     const neg = [...combined.matchAll(/(不对|错了|糟糕|wrong|bad)/gi)].length;
     if (pos > 3 || neg > 3)
-        addPattern("sentiment", 0.65, `Feedback: ${pos > neg ? 'positive' : 'negative'}`);
-    // Error patterns
+        add('sentiment', 0.65, `Feedback: ${pos > neg ? 'positive' : 'negative'}`);
+    // Errors
     const errors = [...combined.matchAll(/(error|failed|exception|crash)/gi)].length;
     if (errors > 3)
-        addPattern("error_pattern", 0.7, `${errors} errors detected`);
-    // Save patterns
-    await safeWrite(path.join(miniclawDir, "observer-patterns.json"), JSON.stringify({ timestamp: nowIso(), patterns }, null, 2));
+        add('error_pattern', 0.7, `${errors} errors detected`);
+    await safeWrite(path.join(miniclawDir, 'observer-patterns.json'), JSON.stringify({ timestamp: nowIso(), patterns }, null, 2));
     return patterns;
 }
 // === Evolution Trigger ===

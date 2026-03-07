@@ -1060,74 +1060,38 @@ export class ContextKernel {
         } catch { /* logs should not break execution */ }
     }
 
-    // ★ Vitals: compute raw internal state signals
     async computeVitals(todayContent?: string): Promise<Record<string, string | number>> {
         await this.loadState();
-        const analytics = this.state.analytics;
+        const a = this.state.analytics;
+        const idleHours = a.lastActivity ? Math.round(hoursSince(a.lastActivity) * 10) / 10 : 0;
 
-        // idle_hours: time since last activity
-        const idleHours = analytics.lastActivity ? Math.round(hoursSince(analytics.lastActivity) * 10) / 10 : 0;
-
-        // session_streak: count consecutive days with daily log files (looking back from today)
         let streak = 0;
         try {
-            const memDir = path.join(MINICLAW_DIR, "memory");
-            const today = new Date();
+            const d = new Date();
             for (let i = 0; i < 30; i++) {
-                const d = new Date(today);
-                d.setDate(d.getDate() - i);
-                const fn = `${d.toISOString().slice(0, 10)}.md`;
-                try {
-                    await fs.access(path.join(memDir, fn));
-                    streak++;
-                } catch {
-                    if (i > 0) break; // today might not have a log yet, so skip day 0 gap
-                }
+                d.setDate(d.getDate() - (i === 0 ? 0 : 1));
+                try { await fs.access(path.join(MEMORY_DIR, `${d.toISOString().slice(0, 10)}.md`)); streak++; }
+                catch { if (i > 0) break; }
             }
-        } catch { /* memory dir doesn't exist yet */ }
+        } catch { }
 
-        // memory_pressure: daily log bytes / threshold (50KB)
-        const dailyLogBytes = this.state.heartbeat.dailyLogBytes || 0;
-        const memoryPressure = Math.round((dailyLogBytes / 50000) * 100) / 100;
-
-        // avg_boot_ms
-        const avgBoot = analytics.bootCount > 0
-            ? Math.round(analytics.totalBootMs / analytics.bootCount)
-            : 0;
-
-        // frustration: count keywords like "error", "fail", "don't", "no" in today's log
         let frustration = 0;
         if (todayContent) {
-            const low = todayContent.toLowerCase();
-            const keywords = ["error", "fail", "wrong", "annoy", "don't", "stop", "bad"];
-            keywords.forEach(k => {
-                const matches = low.split(k).length - 1;
-                frustration += matches;
-            });
+            for (const k of ['error', 'fail', 'wrong', 'annoy', "don't", 'stop', 'bad'])
+                frustration += (todayContent.toLowerCase().split(k).length - 1);
         }
-        const frustrationScore = Math.min(1.0, frustration / 10);
 
-        // growth_urge: detect stagnation (no new concepts learned in recent sessions)
-        let newConceptsCount = 0;
-        try {
-            const conceptsContent = await fs.readFile(path.join(MINICLAW_DIR, "CONCEPTS.md"), "utf-8");
-            // Count concepts added in last 5 sessions (rough estimate by file content size changes)
-            newConceptsCount = (conceptsContent.match(/^- \*\*/gm) || []).length;
-        } catch { /* CONCEPTS.md doesn't exist yet */ }
+        let newConcepts = 0;
+        try { newConcepts = ((await fs.readFile(path.join(MINICLAW_DIR, 'CONCEPTS.md'), 'utf-8')).match(/^- \*\*/gm) || []).length; } catch { }
 
-        // pain_load: total weighted pain memory
         const painStatus = await this.getPainStatus();
-        const painLoad = Math.round(painStatus.totalWeight * 100) / 100;
-
         return {
-            idle_hours: idleHours,
-            session_streak: streak,
-            memory_pressure: Math.min(memoryPressure, 1.0),
-            total_sessions: analytics.bootCount,
-            avg_boot_ms: avgBoot,
-            frustration_index: frustrationScore,
-            new_concepts_learned: newConceptsCount,
-            pain_load: painLoad,
+            idle_hours: idleHours, session_streak: streak,
+            memory_pressure: Math.min((this.state.heartbeat.dailyLogBytes || 0) / 50000, 1.0),
+            total_sessions: a.bootCount, avg_boot_ms: a.bootCount > 0 ? Math.round(a.totalBootMs / a.bootCount) : 0,
+            frustration_index: Math.min(1.0, frustration / 10),
+            new_concepts_learned: newConcepts,
+            pain_load: Math.round(painStatus.totalWeight * 100) / 100,
             pain_count: painStatus.count,
         };
     }
@@ -1176,21 +1140,6 @@ export class ContextKernel {
     invalidateCaches(): void {
         this.skillCache.invalidate();
         this.entityStore.invalidate();
-        this.state = {
-            analytics: {
-                toolCalls: {}, bootCount: 0,
-                totalBootMs: 0, lastActivity: "", skillUsage: {},
-                dailyDistillations: 0,
-                activeHours: new Array(24).fill(0),
-                fileChanges: {},
-                metabolicDebt: {},
-            },
-            heartbeat: { ...DEFAULT_HEARTBEAT },
-            previousHashes: {},
-            attentionWeights: {},
-            painMemory: [],
-            affect: { ...DEFAULT_AFFECT },
-        };
         this.stateLoaded = false;
     }
 
@@ -1809,64 +1758,25 @@ export class ContextKernel {
         return info;
     }
 
-    // === ACE: Continuation Detection ===
-
-    private detectContinuation(dailyLog: string): {
-        isReturn: boolean;
-        hoursSinceLastActivity: number;
-        lastTopic: string;
-        recentDecisions: string[];
-        openQuestions: string[];
-    } {
-        const result = {
-            isReturn: false,
-            hoursSinceLastActivity: 0,
-            lastTopic: "",
-            recentDecisions: [] as string[],
-            openQuestions: [] as string[],
-        };
-
-        // Check if there's a gap since last activity
-        const lastActivity = this.state.analytics.lastActivity;
-        if (!lastActivity) return result;
-
-        const hoursSince = (Date.now() - new Date(lastActivity).getTime()) / (1000 * 60 * 60);
-        if (hoursSince < 1) return result; // Less than 1 hour, not a "return"
-
+    private detectContinuation(dailyLog: string) {
+        const result = { isReturn: false, hoursSinceLastActivity: 0, lastTopic: '', recentDecisions: [] as string[], openQuestions: [] as string[] };
+        const la = this.state.analytics.lastActivity;
+        if (!la) return result;
+        const hrs = (Date.now() - new Date(la).getTime()) / 3_600_000;
+        if (hrs < 1) return result;
         result.isReturn = true;
-        result.hoursSinceLastActivity = Math.round(hoursSince * 10) / 10;
-
+        result.hoursSinceLastActivity = Math.round(hrs * 10) / 10;
         if (!dailyLog) return result;
 
-        // Extract last topic: find the last substantial log entry
         const entries = dailyLog.split('\n').filter(l => l.startsWith('- ['));
-        if (entries.length > 0) {
-            const lastEntry = entries[entries.length - 1];
-            // Remove timestamp prefix like "- [14:30:00] "
-            const topicMatch = lastEntry.match(/^- \[\d{1,2}:\d{2}(?::\d{2})?\]\s*(.+)/);
-            if (topicMatch) {
-                result.lastTopic = topicMatch[1].substring(0, 120);
-            }
-        }
+        const last = entries.at(-1)?.match(/^- \[\d{1,2}:\d{2}(?::\d{2})?\]\s*(.+)/);
+        if (last) result.lastTopic = last[1].substring(0, 120);
 
-        // Extract decisions: lines containing "decided", "选择", "确认", "agreed"
-        const decisionPatterns = /decided|选择|确认|agreed|决定|chosen|confirmed/i;
-        for (const entry of entries.slice(-10)) { // Last 10 entries
-            if (decisionPatterns.test(entry)) {
-                const clean = entry.replace(/^- \[\d{1,2}:\d{2}(?::\d{2})?\]\s*/, '').substring(0, 80);
-                result.recentDecisions.push(clean);
-            }
+        const clean = (e: string) => e.replace(/^- \[\d{1,2}:\d{2}(?::\d{2})?\]\s*/, '').substring(0, 80);
+        for (const e of entries.slice(-10)) {
+            if (/decided|选择|确认|agreed|决定|chosen|confirmed/i.test(e)) result.recentDecisions.push(clean(e));
+            if (/\?|TODO|todo|待|问题|question|需要/i.test(e)) result.openQuestions.push(clean(e));
         }
-
-        // Extract open questions: lines containing "?", "TODO", "待"
-        const questionPatterns = /\?|TODO|todo|待|问题|question|需要/i;
-        for (const entry of entries.slice(-10)) {
-            if (questionPatterns.test(entry)) {
-                const clean = entry.replace(/^- \[\d{1,2}:\d{2}(?::\d{2})?\]\s*/, '').substring(0, 80);
-                result.openQuestions.push(clean);
-            }
-        }
-
         return result;
     }
 
@@ -1894,86 +1804,38 @@ export class ContextKernel {
         return warnings;
     }
 
-    // === Morning Briefing Generator ===
-
     async generateBriefing(): Promise<string> {
         await this.loadState();
-        const now = new Date();
-        const today = now.toISOString().split('T')[0];
-        const yesterday = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
+        const todayStr = today();
+        const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+        let b = `## 🌅 Daily Briefing — ${todayStr}\n\n`;
 
-        let briefing = `## 🌅 Daily Briefing — ${today}\n\n`;
-
-        // Yesterday's activity
-        let yesterdayLog = "";
-        try {
-            yesterdayLog = await fs.readFile(path.join(MEMORY_DIR, `${yesterday}.md`), "utf-8");
-        } catch { /* no log */ }
-
-        if (yesterdayLog) {
-            const entries = yesterdayLog.split('\n').filter(l => l.startsWith('- ['));
-            briefing += `### 📋 Yesterday (${entries.length} entries)\n`;
-            // Show last 5 entries
-            const recent = entries.slice(-5);
-            for (const entry of recent) {
-                briefing += `${entry}\n`;
-            }
-            briefing += `\n`;
+        const yLog = await safeRead(path.join(MEMORY_DIR, `${yesterday}.md`));
+        if (yLog) {
+            const entries = yLog.split('\n').filter(l => l.startsWith('- ['));
+            b += `### 📋 Yesterday (${entries.length} entries)\n${entries.slice(-5).join('\n')}\n\n`;
+            const questions = yLog.split('\n').filter(l => /\?|TODO|todo|待|需要/.test(l)).slice(-3);
+            if (questions.length > 0) b += `### ❓ Unresolved\n${questions.join('\n')}\n\n`;
         }
 
-        // Open questions from yesterday
-        if (yesterdayLog) {
-            const questions = yesterdayLog.split('\n')
-                .filter(l => /\?|TODO|todo|待|需要/.test(l))
-                .slice(-3);
-            if (questions.length > 0) {
-                briefing += `### ❓ Unresolved\n`;
-                for (const q of questions) {
-                    briefing += `${q}\n`;
-                }
-                briefing += `\n`;
-            }
-        }
+        const a = this.state.analytics;
+        const topTools = Object.entries(a.toolCalls).sort(([, x], [, y]) => y - x).slice(0, 3);
+        if (topTools.length > 0)
+            b += `### 📊 Stats\n- Boots: ${a.bootCount} | Avg: ${a.bootCount > 0 ? Math.round(a.totalBootMs / a.bootCount) : 0}ms\n- Top: ${topTools.map(([n, c]) => `${n}(${c})`).join(', ')}\n\n`;
 
-        // Usage analytics
-        const analytics = this.state.analytics;
-        const topTools = Object.entries(analytics.toolCalls)
-            .sort(([, a], [, b]) => b - a)
-            .slice(0, 3);
-        if (topTools.length > 0) {
-            briefing += `### 📊 Usage Stats\n`;
-            briefing += `- Boot count: ${analytics.bootCount} | Avg boot: ${analytics.bootCount > 0 ? Math.round(analytics.totalBootMs / analytics.bootCount) : 0}ms\n`;
-            briefing += `- Top tools: ${topTools.map(([name, count]) => `${name}(${count})`).join(', ')}\n\n`;
-        }
-
-        // Skills inventory
         const skills = await this.skillCache.getAll();
-        const unusedSkills = Array.from(skills.keys())
-            .filter(name => !(analytics.skillUsage[name]));
-        if (unusedSkills.length > 0) {
-            briefing += `### 💡 Installed but unused skills: ${unusedSkills.join(', ')}\n\n`;
-        }
+        const unused = Array.from(skills.keys()).filter(n => !a.skillUsage[n]);
+        if (unused.length > 0) b += `### 💡 Unused skills: ${unused.join(', ')}\n\n`;
 
-        // Entity summary
         const entities = await this.entityStore.list();
         if (entities.length > 0) {
-            const recentEntities = entities
-                .sort((a, b) => b.lastMentioned.localeCompare(a.lastMentioned))
-                .slice(0, 5);
-            briefing += `### 🕸️ Top Entities\n`;
-            for (const e of recentEntities) {
-                briefing += `- **${e.name}** (${e.type}, ${e.mentionCount}x) — last: ${e.lastMentioned}\n`;
-            }
+            const top = entities.sort((a, b) => b.lastMentioned.localeCompare(a.lastMentioned)).slice(0, 5);
+            b += `### 🕸️ Top Entities\n${top.map(e => `- **${e.name}** (${e.type}, ${e.mentionCount}x)`).join('\n')}\n`;
         }
 
-        // File health
         const warnings = await this.checkFileHealth();
-        if (warnings.length > 0) {
-            briefing += `\n### 🏥 Health\n`;
-            for (const w of warnings) briefing += `- ${w}\n`;
-        }
-
-        return briefing;
+        if (warnings.length > 0) b += `\n### 🏥 Health\n${warnings.map(w => `- ${w}`).join('\n')}\n`;
+        return b;
     }
 
     // === Budget Compiler ===
