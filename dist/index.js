@@ -6,7 +6,6 @@ import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import cron from "node-cron";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
 import { textResult, errorResult, today, nowIso, fileExists, safeRead } from "./utils.js";
 // Configuration
@@ -72,7 +71,8 @@ async function executeHeartbeat() {
     }
 }
 function initScheduler() {
-    cron.schedule('*/30 * * * *', async () => { await executeHeartbeat(); });
+    // #13: Replaced node-cron with native setInterval — one fewer dependency
+    setInterval(async () => { await executeHeartbeat(); }, 30 * 60 * 1000);
     console.error('[MiniClaw] Internal scheduler started (heartbeat: every 30 min)');
 }
 // Read version from package.json dynamically
@@ -184,14 +184,18 @@ function getTemplatesDir() {
     return path.join(projectRoot, "templates");
 }
 let ribosomeCache = null;
+let ribosomeCacheTime = 0;
+const RIBOSOME_TTL_MS = 30_000; // #9: 30s TTL to match SkillCache pattern
 async function loadRibosome() {
-    if (ribosomeCache)
+    // #9: Respect TTL so runtime RIBOSOME.json changes are picked up
+    if (ribosomeCache && (Date.now() - ribosomeCacheTime) < RIBOSOME_TTL_MS)
         return ribosomeCache;
     const ribosomePath = path.join(MINICLAW_DIR, "RIBOSOME.json");
     try {
         const content = await fs.readFile(ribosomePath, "utf-8");
         const data = JSON.parse(content);
         ribosomeCache = data;
+        ribosomeCacheTime = Date.now();
         console.error(`[MiniClaw] RIBOSOME loaded: ${Object.keys(data.instincts).length} instincts`);
         return data;
     }
@@ -203,6 +207,7 @@ async function loadRibosome() {
             const content = await fs.readFile(templatePath, "utf-8");
             const data = JSON.parse(content);
             ribosomeCache = data;
+            ribosomeCacheTime = Date.now();
             console.error(`[MiniClaw] RIBOSOME loaded from templates: ${Object.keys(data.instincts).length} instincts`);
             return data;
         }
@@ -324,8 +329,7 @@ async function getContextContent(mode = "full") {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const toolStartTime = Date.now();
-    // ★ Ensure AGENTS.md redirect exists in current working directory
-    await ensureAgentsRedirect();
+    // #8: Removed ensureAgentsRedirect() from hot path — already called at bootstrap (L763)
     // ★ Pain Memory: Check for past negative experiences with this tool
     const hasPain = await kernel.hasPainMemory("", name);
     if (hasPain) {
@@ -544,16 +548,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (action === "set_sentiment") {
                 if (!entityName || !sentiment)
                     return errorResult("'name' and 'sentiment' required.");
-                const entity = await kernel.entityStore.query(entityName);
-                if (!entity)
+                // #12: Use dedicated method instead of add() which incorrectly bumps mentionCount
+                const updated = await kernel.entityStore.updateSentiment(entityName, sentiment);
+                if (!updated)
                     return textResult(`Entity "${entityName}" not found.`);
-                const updated = await kernel.entityStore.add({
-                    name: entity.name,
-                    type: entity.type,
-                    attributes: {},
-                    relations: [],
-                    sentiment: sentiment,
-                });
                 return textResult(`Sentiment for "${entityName}" set to "${sentiment}".`);
             }
             return textResult("Unknown entity action.");

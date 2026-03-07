@@ -47,6 +47,8 @@ export function cronMatchesNow(expr, now) {
         matchCronField(f[4], now.getDay(), 6);
 }
 // ─── Frontmatter ─────────────────────────────────────────────────────────────
+// #11: Hand-rolled YAML parser to maintain zero-dependency policy (no `yaml` or `js-yaml` lib).
+// Supports flat key-value, arrays, and nested objects — sufficient for SKILL.md frontmatter.
 export function parseFrontmatter(content) {
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
     if (!match)

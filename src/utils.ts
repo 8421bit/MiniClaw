@@ -10,35 +10,35 @@ import fs from "node:fs/promises";
 
 export function matchCronField(fieldExpr: string, value: number, max: number): boolean {
     if (fieldExpr === "*") return true;
-    
+
     for (const part of fieldExpr.split(",")) {
         // Range with step: "*/2", "1-10/3"
         if (part.includes("/")) {
             const [rangeStr, stepStr] = part.split("/");
             const step = parseInt(stepStr, 10);
             if (isNaN(step) || step <= 0) continue;
-            
-            const [start, end] = rangeStr === "*" 
-                ? [0, max] 
-                : rangeStr.includes("-") 
-                    ? rangeStr.split("-").map(Number) 
+
+            const [start, end] = rangeStr === "*"
+                ? [0, max]
+                : rangeStr.includes("-")
+                    ? rangeStr.split("-").map(Number)
                     : [parseInt(rangeStr, 10), max];
-            
+
             for (let i = start; i <= end; i += step) {
                 if (i === value) return true;
             }
-        } 
+        }
         // Range: "1-5"
         else if (part.includes("-")) {
             const [s, e] = part.split("-").map(Number);
             if (value >= s && value <= e) return true;
-        } 
+        }
         // Single value: "5"
         else if (parseInt(part, 10) === value) {
             return true;
         }
     }
-    
+
     return false;
 }
 
@@ -52,16 +52,18 @@ export function cronMatchesNow(expr: string, now: Date): boolean {
 
 // ─── Frontmatter ─────────────────────────────────────────────────────────────
 
+// #11: Hand-rolled YAML parser to maintain zero-dependency policy (no `yaml` or `js-yaml` lib).
+// Supports flat key-value, arrays, and nested objects — sufficient for SKILL.md frontmatter.
 export function parseFrontmatter(content: string): Record<string, unknown> {
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
     if (!match) return {};
 
     const fmText = match[1].trim();
-    
+
     // JSON frontmatter
     if (fmText.startsWith('{') && fmText.endsWith('}')) {
-        try { return JSON.parse(fmText); } catch (e) { 
-            console.error(`[MiniClaw] Failed to parse frontmatter JSON: ${e}`); 
+        try { return JSON.parse(fmText); } catch (e) {
+            console.error(`[MiniClaw] Failed to parse frontmatter JSON: ${e}`);
             return {};
         }
     }
@@ -76,7 +78,7 @@ export function parseFrontmatter(content: string): Record<string, unknown> {
     for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) continue;
-        
+
         const indent = line.search(/\S/);
 
         // Pop stack to correct nesting level
@@ -89,10 +91,10 @@ export function parseFrontmatter(content: string): Record<string, unknown> {
         // Array item
         if (trimmed.startsWith('- ')) {
             if (!Array.isArray(current.obj)) continue;
-            
+
             const val = trimmed.slice(2).trim().replace(/^['"]|['"]$/g, '');
             const kvMatch = val.match(/^([\w-]+):\s*(.*)$/);
-            
+
             if (kvMatch && OBJECT_IN_ARRAY_KEYS.has(kvMatch[1])) {
                 current.obj.push({ [kvMatch[1]]: kvMatch[2].trim().replace(/^['"]|['"]$/g, '') });
             } else {
@@ -112,7 +114,7 @@ export function parseFrontmatter(content: string): Record<string, unknown> {
                 if (Array.isArray(current.obj)) {
                     const last = current.obj[current.obj.length - 1];
                     const isNested = typeof last === 'object' && last !== null && !Array.isArray(last) && indent > current.indent;
-                    
+
                     if (isNested) {
                         (last as Record<string, unknown>)[key] = val;
                     } else {
@@ -122,19 +124,19 @@ export function parseFrontmatter(content: string): Record<string, unknown> {
                     result[key] = val;
                     (current.obj as Record<string, unknown>)[key] = val;
                 }
-            } 
+            }
             // No value (nested object or array)
             else {
-                const container = key === 'metadata' 
-                    ? {} 
+                const container = key === 'metadata'
+                    ? {}
                     : ARRAY_KEYS.has(key) ? [] : {};
-                
+
                 (current.obj as Record<string, unknown>)[key] = container;
                 stack.push({ obj: container, indent, key });
             }
         }
     }
-    
+
     return result;
 }
 
@@ -153,7 +155,7 @@ export function hashString(s: string): string {
 // ─── MCP Response Helpers ────────────────────────────────────────────────────
 
 /** Standard MCP text response (eliminates 49+ repetitions) */
-export const textResult = (text: string, isError = false) => ({ 
+export const textResult = (text: string, isError = false) => ({
     content: [{ type: "text" as const, text }],
     ...(isError && { isError: true })
 });

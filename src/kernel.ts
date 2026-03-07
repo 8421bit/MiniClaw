@@ -2,13 +2,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { parseFrontmatter, hashString, atomicWrite, blend, clamp, nowIso, today, safeRead, safeReadJson, daysSince, hoursSince, fileExists } from "./utils.js";
+import { parseFrontmatter, hashString, atomicWrite, blend, clamp, nowIso, today, safeRead, safeReadJson, daysSince, hoursSince, fileExists, cronMatchesNow } from "./utils.js";
 import { analyzePatterns, triggerEvolution as runEvolution } from "./evolution.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // === Configuration & Constants ===
 const HOME_DIR = process.env.HOME || process.cwd();
@@ -288,6 +289,7 @@ class AutonomicSystem {
     private kernel: ContextKernel;
     private timers: Map<string, NodeJS.Timeout> = new Map();
     private lastDreamTime = 0;
+    private lastDreamDate = '';  // #5: Prevent same-day duplicate dreams
     private readonly DREAM_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
     private readonly PULSE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
     private curiosityQueue: Array<{ type: string; target: string; reason: string }> = [];
@@ -360,9 +362,23 @@ class AutonomicSystem {
                 confidence: affect.confidence + (DEFAULT_AFFECT.confidence - affect.confidence) * recoveryRate,
             });
 
-            // Scan for others (silent, just log)
+            // #7 Fix: Scan for others, clean up stale pulse files (>10 min old)
             const entries = await fs.readdir(pulseDir);
-            const others = entries.filter(f => f.endsWith('.json') && f !== `${myId}.json`);
+            const staleThresholdMs = 10 * 60 * 1000;
+            const now = Date.now();
+            const others: string[] = [];
+            for (const f of entries) {
+                if (!f.endsWith('.json') || f === `${myId}.json`) continue;
+                const filePath = path.join(pulseDir, f);
+                try {
+                    const stat = await fs.stat(filePath);
+                    if (now - stat.mtime.getTime() > staleThresholdMs) {
+                        await fs.unlink(filePath).catch(() => { });
+                    } else {
+                        others.push(f);
+                    }
+                } catch { /* skip */ }
+            }
             if (others.length > 0) {
                 console.error(`[MiniClaw] Pulse detected ${others.length} other agents`);
             }
@@ -381,9 +397,11 @@ class AutonomicSystem {
             const lastActivityMs = new Date(analytics.lastActivity || 0).getTime();
             const idleHours = (now - lastActivityMs) / (60 * 60 * 1000);
 
-            if (idleHours >= 4) {
+            const todayStr = today();
+            if (idleHours >= 4 && todayStr !== this.lastDreamDate) {
                 await this.dream();
                 this.lastDreamTime = now;
+                this.lastDreamDate = todayStr;  // #5: Only dream once per day
             }
         } catch (e) {
             console.error(`[MiniClaw] CheckDream error: ${e instanceof Error ? e.message : String(e)}`);
@@ -438,7 +456,7 @@ class AutonomicSystem {
             console.error(`[MiniClaw] Dream complete. Tools: ${Object.keys(toolCounts).length}, Concepts: ${concepts.length}`);
 
             // Trigger DNA evolution (core mechanism)
-            await this.triggerEvolution();
+            await this.runEvolutionCycle();
 
             // ★ Autonomous Execution: fire HEARTBEAT.md via detected CLI
             await this.executeAutonomous();
@@ -483,9 +501,10 @@ class AutonomicSystem {
         const ts = new Date().toISOString();
 
         try {
+            // #3 Fix: Use execFile to avoid shell injection from HEARTBEAT.md content
             const fullArgs = [...selectedCli.args, prompt];
-            const { stdout, stderr } = await execAsync(
-                `${selectedCli.cmd} ${fullArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`,
+            const { stdout, stderr } = await execFileAsync(
+                selectedCli.cmd, fullArgs,
                 { timeout: 120_000, maxBuffer: 512 * 1024 }
             );
             const result = (stdout || stderr || '').trim();
@@ -499,13 +518,10 @@ class AutonomicSystem {
         }
     }
 
-    // Trigger DNA evolution (core mechanism, not a skill)
-    private async triggerEvolution(): Promise<void> {
+    // #15: Renamed from triggerEvolution to avoid conflict with evolution.ts export
+    private async runEvolutionCycle(): Promise<void> {
         try {
-            // First analyze patterns
             await analyzePatterns(MINICLAW_DIR);
-
-            // Then trigger evolution
             console.error(`[MiniClaw] 🧬 Triggering DNA evolution...`);
             const result = await runEvolution(MINICLAW_DIR);
 
@@ -559,8 +575,8 @@ class AutonomicSystem {
                 // Deduplicate: skip if already ran this minute (persisted across restarts)
                 if (persistedRuns[job.id] === currentMinuteKey) continue;
 
-                // Simple cron match
-                if (this.cronMatchesNow(job.schedule.expr, now, job.schedule.tz)) {
+                // #1 Fix: Use the full cron parser from utils.ts instead of the buggy local one
+                if (cronMatchesNow(job.schedule.expr, now)) {
                     await this.injectJobHeartbeat(job, now);
                     persistedRuns[job.id] = currentMinuteKey;
                     await this.kernel.updateHeartbeatState({ lastJobRuns: persistedRuns } as any);
@@ -647,30 +663,7 @@ class AutonomicSystem {
         return { level: 0, type: 'none', target: '' };
     }
 
-    private cronMatchesNow(expr: string, now: Date, tz?: string): boolean {
-        // Simple cron parser: supports "* * * * *" format
-        // For now, only check minute-level precision
-        const parts = expr.trim().split(/\s+/);
-        if (parts.length !== 5) return false;
-
-        const [minuteExpr] = parts;
-        const currentMinute = now.getMinutes();
-
-        // Handle "*" (any) or specific number
-        if (minuteExpr === '*') return true;
-        if (minuteExpr.startsWith('*/')) {
-            const interval = parseInt(minuteExpr.slice(2), 10);
-            if (!isNaN(interval)) {
-                return currentMinute % interval === 0;
-            }
-        }
-        if (minuteExpr.includes(',')) {
-            const minutes = minuteExpr.split(',').map(m => parseInt(m, 10));
-            return minutes.includes(currentMinute);
-        }
-        const specificMinute = parseInt(minuteExpr, 10);
-        return !isNaN(specificMinute) && specificMinute === currentMinute;
-    }
+    // #1: Removed buggy cronMatchesNow() — now using utils.cronMatchesNow() which parses all 5 fields
 
     private async injectJobHeartbeat(job: { name: string; payload: { text: string } }, now: Date): Promise<void> {
         try {
@@ -774,6 +767,16 @@ class EntityStore {
         const idx = this.entities.findIndex(e => e.name.toLowerCase() === name.toLowerCase());
         if (idx === -1) return false;
         this.entities.splice(idx, 1);
+        await this.save();
+        return true;
+    }
+
+    // #12: Dedicated sentiment update without side-effects (no mentionCount bump)
+    async updateSentiment(name: string, sentiment: string): Promise<boolean> {
+        await this.load();
+        const entity = this.entities.find(e => e.name.toLowerCase() === name.toLowerCase());
+        if (!entity) return false;
+        entity.sentiment = sentiment;
         await this.save();
         return true;
     }
