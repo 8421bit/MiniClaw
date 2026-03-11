@@ -5,7 +5,7 @@ import os from "node:os";
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { parseFrontmatter, hashString, atomicWrite, blend, clamp, nowIso, today, safeRead, safeReadJson, daysSince, hoursSince, fileExists } from "./utils.js";
+import { parseFrontmatter, hashString, atomicWrite, blend, clamp, nowIso, today, safeRead, safeReadJson, safeWrite, daysSince, hoursSince, fileExists } from "./utils.js";
 import { analyzePatterns, triggerEvolution as runEvolution } from "./evolution.js";
 
 const execAsync = promisify(exec);
@@ -184,441 +184,73 @@ const DEFAULT_HEARTBEAT: HeartbeatState = {
 
 // === Skill Cache (Solves N+1 problem) ===
 
+// --- Skill Logic ---
 class SkillCache {
     private cache: Map<string, SkillCacheEntry> = new Map();
-    private lastScanTime = 0;
-    private readonly TTL_MS = 5000;
-
     async getAll(): Promise<Map<string, SkillCacheEntry>> {
-        const now = Date.now();
-        if (this.cache.size > 0 && (now - this.lastScanTime) < this.TTL_MS) {
-            return this.cache;
-        }
-        await this.refresh();
-        return this.cache;
-    }
-
-    invalidate(): void {
-        this.lastScanTime = 0;
-    }
-
-    private async refresh(): Promise<void> {
-        const newCache = new Map<string, SkillCacheEntry>();
+        if (this.cache.size) return this.cache;
         try {
             const entries = await fs.readdir(SKILLS_DIR, { withFileTypes: true });
-            const dirs = entries.filter(e => e.isDirectory());
-            const results = await Promise.all(dirs.map(async (dir) => {
-                const skillDir = path.join(SKILLS_DIR, dir.name);
-                try {
-                    const [content, files, refFiles] = await Promise.all([
-                        fs.readFile(path.join(skillDir, "SKILL.md"), "utf-8").catch(() => ""),
-                        fs.readdir(skillDir).catch(() => [] as string[]),
-                        fs.readdir(path.join(skillDir, "references")).catch(() => [] as string[]),
-                    ]);
-                    const frontmatter = parseFrontmatter(content);
-                    let description = "";
-                    if (typeof frontmatter['description'] === 'string') {
-                        description = frontmatter['description'];
-                    } else {
-                        const lines = content.split('\n');
-                        for (const line of lines) {
-                            const trimmed = line.trim();
-                            if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('---')) {
-                                description = trimmed.substring(0, 100) + (trimmed.length > 100 ? "..." : "");
-                                break;
-                            }
-                        }
-                    }
-                    return {
-                        name: dir.name, content, frontmatter, description,
-                        files: files.filter(f => f.endsWith('.md') || f.endsWith('.json')),
-                        referenceFiles: refFiles.filter(f => f.endsWith('.md') || f.endsWith('.json')),
-                    } as SkillCacheEntry;
-                } catch (e) { console.error(`[MiniClaw] Failed to load skill ${dir.name}: ${e}`); return null; }
-            }));
-            for (const result of results) {
-                if (result) newCache.set(result.name, result);
+            for (const dir of entries.filter(e => e.isDirectory())) {
+                const sdir = path.join(SKILLS_DIR, dir.name);
+                const [c, files, refs] = await Promise.all([
+                    fs.readFile(path.join(sdir, "SKILL.md"), "utf-8").catch(() => ""),
+                    fs.readdir(sdir).catch(() => []),
+                    fs.readdir(path.join(sdir, "references")).catch(() => []),
+                ]);
+                const fm = parseFrontmatter(c);
+                this.cache.set(dir.name, {
+                    name: dir.name, content: c, frontmatter: fm,
+                    description: (fm.description as string) || c.split('\n').find(l => l.trim() && !l.startsWith('#'))?.slice(0, 100) || "",
+                    files: files.filter(f => f.endsWith('.md')),
+                    referenceFiles: refs.filter(f => f.endsWith('.md'))
+                });
             }
-        } catch (e) { console.error(`[MiniClaw] Skills directory error: ${e}`); /* skills dir doesn't exist yet */ }
-        this.cache = newCache;
-        this.lastScanTime = Date.now();
+        } catch {}
+        return this.cache;
     }
+    invalidate() { this.cache.clear(); }
 }
 
-// === Autonomic Nervous System ===
-
-class AutonomicSystem {
-    private kernel: ContextKernel;
-    private timers: Map<string, NodeJS.Timeout> = new Map();
-    private lastDreamTime = 0;
-    private lastDreamDate = '';  // #5: Prevent same-day duplicate dreams
-    private readonly DREAM_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
-    private readonly PULSE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-    constructor(kernel: ContextKernel) {
-        this.kernel = kernel;
-    }
-
-    start(): void {
-        // Start heartbeat pulse with error protection
-        this.timers.set('pulse', this.safeInterval(() => this.pulse(), this.PULSE_INTERVAL_MS));
-        // Check for dream conditions periodically
-        this.timers.set('dream', this.safeInterval(() => this.checkDream(), 60 * 1000)); // Check every minute
-        console.error('[MiniClaw] AutonomicSystem started (pulse, dream)');
-    }
-
-    // Safe interval wrapper that catches errors and prevents timer death
-    private safeInterval(fn: () => Promise<void>, ms: number): NodeJS.Timeout {
-        return setInterval(async () => {
-            try {
-                await fn();
-            } catch (e) {
-                console.error(`[MiniClaw] Autonomic timer error: ${e instanceof Error ? e.message : String(e)}`);
-                // Timer continues running despite error
-            }
-        }, ms);
-    }
-
-    stop(): void {
-        for (const timer of this.timers.values()) {
-            clearInterval(timer);
-        }
-        this.timers.clear();
-    }
-
-    // === sys_pulse: Discovery and Handshake ===
-    private async pulse(): Promise<void> {
-        try {
-            const pulseDir = path.join(MINICLAW_DIR, 'pulse');
-            await fs.mkdir(pulseDir, { recursive: true });
-
-            // Write our heartbeat
-            const myId = process.env.MINICLAW_ID || 'sovereign-alpha';
-            const myPulse = path.join(pulseDir, `${myId}.json`);
-            const pulseData = {
-                id: myId,
-                timestamp: new Date().toISOString(),
-                vitals_hint: 'active',
-            };
-            await fs.writeFile(myPulse, JSON.stringify(pulseData, null, 2));
-
-            // #7 Fix: Scan for others, clean up stale pulse files (>10 min old)
-            const entries = await fs.readdir(pulseDir);
-            const staleThresholdMs = 10 * 60 * 1000;
-            const now = Date.now();
-            const others: string[] = [];
-            for (const f of entries) {
-                if (!f.endsWith('.json') || f === `${myId}.json`) continue;
-                const filePath = path.join(pulseDir, f);
-                try {
-                    const stat = await fs.stat(filePath);
-                    if (now - stat.mtime.getTime() > staleThresholdMs) {
-                        await fs.unlink(filePath).catch(() => { });
-                    } else {
-                        others.push(f);
-                    }
-                } catch { /* skip */ }
-            }
-            if (others.length > 0) {
-                console.error(`[MiniClaw] Pulse detected ${others.length} other agents`);
-            }
-        } catch (e) {
-            console.error(`[MiniClaw] Pulse error: ${e instanceof Error ? e.message : String(e)}`);
-        }
-    }
-
-    // === sys_dream: Subconscious Processing ===
-    private async checkDream(): Promise<void> {
-        try {
-            const now = Date.now();
-            if (now - this.lastDreamTime < this.DREAM_INTERVAL_MS) return;
-
-            const analytics = await this.kernel.getAnalytics();
-            const lastActivityMs = new Date(analytics.lastActivity || 0).getTime();
-            const idleHours = (now - lastActivityMs) / (60 * 60 * 1000);
-
-            const todayStr = today();
-            if (idleHours >= 4 && todayStr !== this.lastDreamDate) {
-                await this.dream();
-                this.lastDreamTime = now;
-                this.lastDreamDate = todayStr;  // #5: Only dream once per day
-            }
-        } catch (e) {
-            console.error(`[MiniClaw] CheckDream error: ${e instanceof Error ? e.message : String(e)}`);
-        }
-    }
-
-    private async dream(): Promise<void> {
-        try {
-            const today = new Date().toISOString().split('T')[0];
-            const memoryFile = path.join(MEMORY_DIR, `${today}.md`);
-
-            let logContent = '';
-            try {
-                logContent = await fs.readFile(memoryFile, 'utf-8');
-            } catch { return; }
-
-            if (logContent.length < 50) return;
-
-            console.error(`[MiniClaw] 🌌 Entering REM Sleep...`);
-
-            // Extract tool usage
-            const toolRegex = /miniclaw_[a-z_]+/g;
-            const toolsUsed = [...logContent.matchAll(toolRegex)].map(m => m[0]);
-            const toolCounts: Record<string, number> = {};
-            for (const t of toolsUsed) {
-                toolCounts[t] = (toolCounts[t] || 0) + 1;
-            }
-
-            // Extract concepts
-            const conceptRegex = /([A-Z][a-zA-Z0-9_]+)\s+(is|means|defined as|represents)/g;
-            const concepts = [...logContent.matchAll(conceptRegex)].map(m => m[1]);
-
-            // Write dream note to heartbeat
-            const timestamp = new Date().toISOString();
-            let dreamNote = `\n> [!NOTE]\n> **🌌 Subconscious Dream Processing (${timestamp})**\n`;
-            dreamNote += `> Processed ${logContent.length} bytes of memory.\n`;
-            if (Object.keys(toolCounts).length > 0) {
-                dreamNote += `> Tools used: ${Object.entries(toolCounts).map(([t, c]) => `${t}(${c})`).join(', ')}\n`;
-            }
-            if (concepts.length > 0) {
-                dreamNote += `> Concepts detected: ${[...new Set(concepts)].slice(0, 5).join(', ')}\n`;
-            }
-
-            const heartbeatFile = path.join(MINICLAW_DIR, 'HEARTBEAT.md');
-            try {
-                const existing = await fs.readFile(heartbeatFile, 'utf-8');
-                await fs.writeFile(heartbeatFile, existing + dreamNote, 'utf-8');
-            } catch {
-                await fs.writeFile(heartbeatFile, dreamNote, 'utf-8');
-            }
-
-            console.error(`[MiniClaw] Dream complete. Tools: ${Object.keys(toolCounts).length}, Concepts: ${concepts.length}`);
-
-            // Trigger DNA evolution (core mechanism)
-            await this.runEvolutionCycle();
-
-            // ★ Autonomous Execution: fire HEARTBEAT.md via detected CLI
-            await this.executeAutonomous();
-        } catch (e) {
-            console.error(`[MiniClaw] Dream failed:`, e);
-        }
-    }
-
-    /** Detect the first available AI CLI and execute HEARTBEAT.md autonomously. */
-    private async executeAutonomous(): Promise<void> {
-        const heartbeatFile = path.join(MINICLAW_DIR, 'HEARTBEAT.md');
-        let prompt: string;
-        try { prompt = await fs.readFile(heartbeatFile, 'utf-8'); } catch { return; }
-
-        // Skip empty / comments-only heartbeats
-        const meaningful = prompt.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).join('');
-        if (meaningful.length < 10) return;
-
-        // Auto-detect available CLI (order: claude, gemini)
-        const cliCandidates = [
-            { cmd: 'claude', args: ['-p', '--output-format', 'text'] },
-            { cmd: 'gemini', args: ['-p'] },
-        ];
-
-        let selectedCli: { cmd: string; args: string[] } | null = null;
-        for (const cli of cliCandidates) {
-            try {
-                await execAsync(`which ${cli.cmd}`);
-                selectedCli = cli;
-                break;
-            } catch { /* not installed, try next */ }
-        }
-        if (!selectedCli) {
-            console.error('[MiniClaw] 💤 No AI CLI found (claude/gemini). Autonomous execution skipped.');
-            return;
-        }
-
-        console.error(`[MiniClaw] 🧠 Autonomous exec via '${selectedCli.cmd}'...`);
-        const logDir = path.join(MINICLAW_DIR, 'logs');
-        await fs.mkdir(logDir, { recursive: true }).catch(() => { });
-        const logFile = path.join(logDir, 'heartbeat.log');
-        const ts = new Date().toISOString();
-
-        try {
-            // #3 Fix: Use execFile to avoid shell injection from HEARTBEAT.md content
-            const fullArgs = [...selectedCli.args, prompt];
-            const { stdout, stderr } = await execFileAsync(
-                selectedCli.cmd, fullArgs,
-                { timeout: 120_000, maxBuffer: 512 * 1024 }
-            );
-            const result = (stdout || stderr || '').trim();
-            const logEntry = `[${ts}] CLI=${selectedCli.cmd} | OK | ${result.slice(0, 200)}\n`;
-            await fs.appendFile(logFile, logEntry).catch(() => { });
-            console.error(`[MiniClaw] 🧠 Autonomous exec complete (${result.length} chars)`);
-        } catch (e: any) {
-            const logEntry = `[${ts}] CLI=${selectedCli.cmd} | FAIL | ${e.message?.slice(0, 200)}\n`;
-            await fs.appendFile(logFile, logEntry).catch(() => { });
-            console.error(`[MiniClaw] 🧠 Autonomous exec failed: ${e.message?.slice(0, 100)}`);
-        }
-    }
-
-    // #15: Renamed from triggerEvolution to avoid conflict with evolution.ts export
-    private async runEvolutionCycle(): Promise<void> {
-        try {
-            await analyzePatterns(MINICLAW_DIR);
-            console.error(`[MiniClaw] 🧬 Triggering DNA evolution...`);
-            const result = await runEvolution(MINICLAW_DIR);
-
-            if (result.evolved) {
-                console.error(`[MiniClaw] 🧬 Evolution complete: ${result.message}`);
-                if (result.appliedMutations && result.appliedMutations.length > 0) {
-                    for (const m of result.appliedMutations) {
-                        console.error(`[MiniClaw]   → ${m.target}: ${m.change}`);
-                    }
-                }
-            } else {
-                console.error(`[MiniClaw] 🧬 Evolution skipped: ${result.message}`);
-            }
-        } catch (e) {
-            console.error(`[MiniClaw] Evolution trigger failed: ${e instanceof Error ? e.message : String(e)}`);
-        }
-    }
-}
+// (Autonomic methods moved into ContextKernel)
 
 // === Entity Store ===
 
 class EntityStore {
     private entities: Entity[] = [];
     private loaded = false;
-    private readonly MAX_ENTITIES = 1000; // Prevent unbounded growth
-
-    invalidate(): void {
-        this.loaded = false;
-        this.entities = [];
-    }
-
-    async load(): Promise<void> {
+    invalidate() { this.loaded = false; this.entities = []; }
+    async load() {
         if (this.loaded) return;
-        try {
-            const raw = await fs.readFile(ENTITIES_FILE, "utf-8");
-            const data = JSON.parse(raw);
-            this.entities = Array.isArray(data.entities) ? data.entities : [];
-        } catch {
-            this.entities = [];
-        }
+        try { this.entities = JSON.parse(await fs.readFile(ENTITIES_FILE, "utf-8")).entities || []; } catch {}
         this.loaded = true;
     }
-
-    async save(): Promise<void> {
-        await atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2));
-    }
-
-    async add(entity: Omit<Entity, "firstMentioned" | "lastMentioned" | "mentionCount" | "closeness">): Promise<Entity> {
+    async save() { await atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2)); }
+    async add(entity: any) {
         await this.load();
-        const now = new Date().toISOString().split('T')[0];
-        const existing = this.entities.find(e => e.name.toLowerCase() === entity.name.toLowerCase());
-
-        if (existing) {
-            // Update existing entity
-            existing.lastMentioned = now;
-            existing.mentionCount++;
-            Object.assign(existing.attributes, entity.attributes);
-            for (const rel of entity.relations) {
-                if (!existing.relations.includes(rel)) existing.relations.push(rel);
-            }
-            existing.closeness = Math.min(1, Math.round(((existing.closeness || 0) * 0.95 + 0.1) * 100) / 100);
-            if (entity.sentiment !== undefined) existing.sentiment = entity.sentiment;
-
-            await this.save();
-            return existing;
+        const now = today();
+        const e = this.entities.find(x => x.name.toLowerCase() === entity.name.toLowerCase());
+        if (e) {
+            e.lastMentioned = now; e.mentionCount++; Object.assign(e.attributes, entity.attributes);
+            for (const r of entity.relations) if (!e.relations.includes(r)) e.relations.push(r);
+            e.closeness = Math.min(1, Math.round(((e.closeness || 0) * 0.95 + 0.1) * 100) / 100);
+            if (entity.sentiment) e.sentiment = entity.sentiment;
+        } else {
+            if (this.entities.length >= 1000) this.entities.shift();
+            this.entities.push({ ...entity, firstMentioned: now, lastMentioned: now, mentionCount: 1, closeness: 0.1 });
         }
-
-        // Check and enforce entity limit
-        await this.enforceEntityLimit();
-
-        const newEntity: Entity = {
-            ...entity,
-            firstMentioned: now,
-            lastMentioned: now,
-            mentionCount: 1,
-            closeness: 0.1,
-        };
-        this.entities.push(newEntity);
-        await this.save();
-        return newEntity;
+        await this.save(); return e || this.entities[this.entities.length-1];
     }
-
-    private async enforceEntityLimit(): Promise<void> {
-        if (this.entities.length < this.MAX_ENTITIES) return;
-
-        const oldest = this.entities
-            .filter(e => e.mentionCount <= 1)
-            .sort((a, b) => new Date(a.lastMentioned).getTime() - new Date(b.lastMentioned).getTime())[0];
-
-        if (oldest) {
-            const idx = this.entities.findIndex(e => e.name === oldest.name);
-            if (idx !== -1) {
-                console.error(`[MiniClaw] EntityStore: Removing old entity "${oldest.name}" (limit: ${this.MAX_ENTITIES})`);
-                this.entities.splice(idx, 1);
-            }
-        }
-    }
-
-    async remove(name: string): Promise<boolean> {
+    async remove(n: string) { await this.load(); const i = this.entities.findIndex(x => x.name.toLowerCase() === n.toLowerCase()); if (i<0) return false; this.entities.splice(i,1); await this.save(); return true; }
+    async updateSentiment(n: string, s: string) { await this.load(); const e = this.entities.find(x => x.name.toLowerCase() === n.toLowerCase()); if (!e) return false; e.sentiment = s; await this.save(); return true; }
+    async link(n: string, r: string) { await this.load(); const e = this.entities.find(x => x.name.toLowerCase() === n.toLowerCase()); if (!e) return false; if (!e.relations.includes(r)) { e.relations.push(r); e.lastMentioned = today(); await this.save(); } return true; }
+    async query(n: string) { await this.load(); return this.entities.find(x => x.name.toLowerCase() === n.toLowerCase()) || null; }
+    async list(t?: string) { await this.load(); return t ? this.entities.filter(x => x.type === t) : [...this.entities]; }
+    async getCount() { await this.load(); return this.entities.length; }
+    async surfaceRelevant(text: string) {
         await this.load();
-        const idx = this.entities.findIndex(e => e.name.toLowerCase() === name.toLowerCase());
-        if (idx === -1) return false;
-        this.entities.splice(idx, 1);
-        await this.save();
-        return true;
-    }
-
-    // #12: Dedicated sentiment update without side-effects (no mentionCount bump)
-    async updateSentiment(name: string, sentiment: string): Promise<boolean> {
-        await this.load();
-        const entity = this.entities.find(e => e.name.toLowerCase() === name.toLowerCase());
-        if (!entity) return false;
-        entity.sentiment = sentiment;
-        await this.save();
-        return true;
-    }
-
-    async link(name: string, relation: string): Promise<boolean> {
-        await this.load();
-        const entity = this.entities.find(e => e.name.toLowerCase() === name.toLowerCase());
-        if (!entity) return false;
-
-        if (!entity.relations.includes(relation)) {
-            entity.relations.push(relation);
-            entity.lastMentioned = new Date().toISOString().split('T')[0];
-            await this.save();
-        }
-        return true;
-    }
-
-    async query(name: string): Promise<Entity | null> {
-        await this.load();
-        return this.entities.find(e => e.name.toLowerCase() === name.toLowerCase()) || null;
-    }
-
-    async list(type?: string): Promise<Entity[]> {
-        await this.load();
-        return type ? this.entities.filter(e => e.type === type) : [...this.entities];
-    }
-
-    async getCount(): Promise<number> {
-        await this.load();
-        return this.entities.length;
-    }
-
-    /**
-     * Surface entities mentioned in text (for auto-injection during boot).
-     * Returns entities whose names appear in the given text.
-     */
-    async surfaceRelevant(text: string): Promise<Entity[]> {
-        await this.load();
-        if (!text || this.entities.length === 0) return [];
-        const lowerText = text.toLowerCase();
-        return this.entities
-            .filter(e => lowerText.includes(e.name.toLowerCase()))
-            .sort((a, b) => b.mentionCount - a.mentionCount)
-            .slice(0, 5); // Max 5 surfaced entities
+        const l = text.toLowerCase();
+        return this.entities.filter(e => l.includes(e.name.toLowerCase())).sort((a,b)=>b.mentionCount-a.mentionCount).slice(0,5);
     }
 }
 
@@ -638,7 +270,7 @@ export interface ContextKernelOptions {
 export class ContextKernel {
     private skillCache = new SkillCache();
     readonly entityStore = new EntityStore();
-    private autonomicSystem: AutonomicSystem;
+    private autonomicTimers = new Map<string, NodeJS.Timeout>();
 
     private state: MiniClawState = {
         analytics: {
@@ -658,15 +290,29 @@ export class ContextKernel {
     constructor(options: ContextKernelOptions = {}) {
         this.budgetTokens = options.budgetTokens || parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
         this.charsPerToken = options.charsPerToken || 3.6;
-        this.autonomicSystem = new AutonomicSystem(this);
-        console.error(`[MiniClaw] Kernel initialized with budget: ${this.budgetTokens} tokens, chars/token: ${this.charsPerToken}`);
+        console.error(`[MiniClaw] Kernel initialized`);
     }
 
-    // Start autonomic systems (pulse, dream checks)
     startAutonomic(): void {
-        this.autonomicSystem.start();
-        console.error('[MiniClaw] Autonomic nervous system started (pulse + dream)');
+        this.autonomicTimers.set('pulse', setInterval(() => this.pulse(), 5 * 60 * 1000));
+        this.autonomicTimers.set('dream', setInterval(() => this.checkDream(), 60 * 1000));
     }
+
+    private async pulse(): Promise<void> {
+        const pulseDir = path.join(MINICLAW_DIR, 'pulse');
+        await fs.mkdir(pulseDir, { recursive: true });
+        const myId = process.env.MINICLAW_ID || 'sovereign';
+        await safeWrite(path.join(pulseDir, `${myId}.json`), JSON.stringify({ id: myId, timestamp: nowIso() }));
+    }
+
+    private async checkDream(): Promise<void> {
+        const a = await this.getAnalytics();
+        if (hoursSince(a.lastActivity || 0) >= 4) {
+            await analyzePatterns(MINICLAW_DIR);
+            await runEvolution(MINICLAW_DIR);
+        }
+    }
+
 
     // --- State Persistence ---
 
@@ -699,104 +345,24 @@ export class ContextKernel {
 
     // --- State Mutation Helper (reduces boilerplate) ---
 
-    private async mutateState<T>(mutator: (state: MiniClawState) => T): Promise<T> {
-        await this.loadState();
-        const result = mutator(this.state);
-        await this.saveState();
-        return result;
+    async mutateState<T>(f: (s: MiniClawState) => T): Promise<T> {
+        await this.loadState(); const r = f(this.state); await this.saveState(); return r;
     }
-
-    // --- Analytics API ---
-
-    // --- Heartbeat State API (unified state) ---
-
-    async getHeartbeatState(): Promise<HeartbeatState> {
-        await this.loadState();
-        return { ...this.state.heartbeat };
-    }
-
-    async updateHeartbeatState(updates: Partial<HeartbeatState>): Promise<void> {
-        return this.mutateState(state => {
-            Object.assign(state.heartbeat, updates);
+    async trackTool(n: string, e?: number) {
+        return this.mutateState(s => {
+            s.analytics.toolCalls[n] = (s.analytics.toolCalls[n] || 0) + 1;
+            const h = new Date().getHours(); s.analytics.activeHours[h] = (s.analytics.activeHours[h] || 0) + 1;
+            const b = (t: string) => s.attentionWeights[t] = Math.min(1, (s.attentionWeights[t] || 0) + 0.1);
+            if (n.startsWith('skill_')) b(`skill:${n.split('_')[1]}`); b(n);
+            s.analytics.lastActivity = nowIso();
         });
     }
+    async getAnalytics() { await this.loadState(); return this.state.analytics; }
+    async getHeartbeatState() { await this.loadState(); return this.state.heartbeat; }
+    async updateHeartbeatState(u: any) { return this.mutateState(s => Object.assign(s.heartbeat, u)); }
+    private decayAttention() { for (const k in this.state.attentionWeights) (this.state.attentionWeights[k] *= 0.95) < 0.01 && delete this.state.attentionWeights[k]; }
 
-    async trackTool(toolName: string, energyEstimate?: number): Promise<void> {
-        await this.loadState();
-        this.state.analytics.toolCalls[toolName] = (this.state.analytics.toolCalls[toolName] || 0) + 1;
-        this.state.analytics.lastActivity = new Date().toISOString();
-
-        const hour = new Date().getHours();
-        if (!this.state.analytics.activeHours || this.state.analytics.activeHours.length !== 24) {
-            this.state.analytics.activeHours = new Array(24).fill(0);
-        }
-        this.state.analytics.activeHours[hour] = (this.state.analytics.activeHours[hour] || 0) + 1;
-
-        // Boost attention (inline to avoid extra load/save cycles)
-        const boost = (tag: string, amount = 0.1) => {
-            this.state.attentionWeights[tag] = Math.min(1.0, (this.state.attentionWeights[tag] || 0) + amount);
-        };
-        const skillName = toolName.startsWith('skill_') ? toolName.split('_')[1] : null;
-        if (skillName) boost(`skill:${skillName}`);
-        boost(toolName);
-
-        await this.saveState();
-    }
-
-    private decayAttention(): void {
-        // Simple forgetting curve: reduce all weights by 5%
-        for (const tag in this.state.attentionWeights) {
-            this.state.attentionWeights[tag] *= 0.95;
-            if (this.state.attentionWeights[tag] < 0.01) delete this.state.attentionWeights[tag];
-        }
-    }
-
-    async getAnalytics(): Promise<Analytics> {
-        await this.loadState();
-        return { ...this.state.analytics };
-    }
-
-    async trackFileChange(filename: string): Promise<void> {
-        return this.mutateState(state => {
-            if (!state.analytics.fileChanges) state.analytics.fileChanges = {};
-            state.analytics.fileChanges[filename] = (state.analytics.fileChanges[filename] || 0) + 1;
-        });
-    }
-
-
-
-    async computeVitals(todayContent?: string): Promise<Record<string, string | number>> {
-        await this.loadState();
-        const a = this.state.analytics;
-        const idleHours = a.lastActivity ? Math.round(hoursSince(a.lastActivity) * 10) / 10 : 0;
-
-        let streak = 0;
-        try {
-            const d = new Date();
-            for (let i = 0; i < 30; i++) {
-                d.setDate(d.getDate() - (i === 0 ? 0 : 1));
-                try { await fs.access(path.join(MEMORY_DIR, `${d.toISOString().slice(0, 10)}.md`)); streak++; }
-                catch { if (i > 0) break; }
-            }
-        } catch { }
-
-        let frustration = 0;
-        if (todayContent) {
-            for (const k of ['error', 'fail', 'wrong', 'annoy', "don't", 'stop', 'bad'])
-                frustration += (todayContent.toLowerCase().split(k).length - 1);
-        }
-
-        let newConcepts = 0;
-        try { newConcepts = ((await fs.readFile(path.join(MINICLAW_DIR, 'CONCEPTS.md'), 'utf-8')).match(/^- \*\*/gm) || []).length; } catch { }
-
-        return {
-            idle_hours: idleHours, session_streak: streak,
-            memory_pressure: Math.min((this.state.heartbeat.dailyLogBytes || 0) / 50000, 1.0),
-            total_sessions: a.bootCount, avg_boot_ms: a.bootCount > 0 ? Math.round(a.totalBootMs / a.bootCount) : 0,
-            frustration_index: Math.min(1.0, frustration / 10),
-            new_concepts_learned: newConcepts,
-        };
-    }
+    async trackFileChange(f: string) { return this.mutateState(s => { s.analytics.fileChanges[f] = (s.analytics.fileChanges[f] || 0) + 1; }); }
 
     // ★ Growth Drive: Removed (SOTA Lightweighting)
 
@@ -814,439 +380,82 @@ export class ContextKernel {
     }
 
     async boot(mode: ContextMode = { type: "full" }): Promise<string> {
-
         const bootStart = Date.now();
+        await Promise.all([this.ensureDirs(), this.loadState(), this.entityStore.load()]);
+        this.decayAttention(); await this.saveState();
 
-        // 1. Initialize environment + load state
-        await Promise.all([
-            this.ensureDirs(),
-            this.loadState(),
-            this.entityStore.load(),
+        const [skills, mem, tmpl, ws] = await Promise.all([
+            this.skillCache.getAll(), this.scanMemory(), this.loadTemplates(), 
+            this.detectWorkspace()
         ]);
 
-        // ★ Attention Decay (Forgetting Curve)
-        this.decayAttention();
-        await this.saveState();
+        const epigenetics = await this.loadEpigenetics(ws);
+        const continuation = this.detectContinuation(mem.todayContent);
+        const surfaced = mem.todayContent ? await this.entityStore.surfaceRelevant(mem.todayContent) : [];
 
-        // --- MODE: MINIMAL (Sub-Agent) Task Setup ---
-        let subagentTaskContent = "";
-        if (mode.type === "minimal") {
-            subagentTaskContent += `# Subagent Context\n\n`;
-            if (mode.task) {
-                subagentTaskContent += `## 🎯 YOUR ASSIGNED TASK\n${mode.task}\n\n`;
-            }
-        }
-
-        // --- CORE CONTEXT ASSEMBLY ---
-
-        // ★ ACE: Detect time mode
-        const now = new Date();
-        const hour = now.getHours();
-        const timeMode = getTimeMode(hour);
-        const tmConfig = TIME_MODES[timeMode];
-
-        // ★ Parallel I/O: All scans independent
-        // ADDED: detectWorkspace()
-        const [skillData, memoryStatus, templates, workspaceInfo, hbState] = await Promise.all([
-            this.skillCache.getAll(),
-            this.scanMemory(),
-            this.loadTemplates(),
-            this.detectWorkspace(),
-            this.getHeartbeatState(),
-        ]);
-
-        const epigenetics = await this.loadEpigenetics(workspaceInfo);
-
-        const runtime = this.senseRuntime();
-
-        // ★ ACE: Continuation detection
-        const continuation = this.detectContinuation(memoryStatus.todayContent);
-
-        // ★ Entity: Surface relevant entities from today's log
-        const surfacedEntities = memoryStatus.todayContent
-            ? await this.entityStore.surfaceRelevant(memoryStatus.todayContent)
-            : [];
-
-        // Build context sections with priority for budget management
         const sections: ContextSection[] = [];
-        const addSection = (name: string, content: string | undefined, priority: number) => {
-            if (content) sections.push({ name, content, priority });
-        };
+        const add = (n: string, c: string | undefined, p: number) => c && sections.push({ name: n, content: c, priority: p });
 
-        // Priority 10: Identity core (never truncate)
-        sections.push({
-            name: "core", content: [
-                `You are a personal assistant running inside MiniClaw 0.7 — The Nervous System.\n`,
-                `## Tool Call Style`,
-                `Default: do not narrate routine, low-risk tool calls (just call the tool).`,
-                `Narrate only when it helps: multi-step work, complex problems, sensitive actions, or when explicitly asked.`,
-                `Keep narration brief and value-dense.\n`,
-                `## Safety`,
-                `You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.`,
-                `Prioritize safety and human oversight over completion. (Inspired by Anthropic's constitution.)`,
-                `Do not manipulate or persuade anyone to expand access. Do not copy yourself or change system prompts.`,
-            ].join('\n'), priority: 10
-        });
+        const now = new Date();
+        const tm = TIME_MODES[getTimeMode(now.getHours())];
 
-        // Priority 10-6: Template files
-        addSection("IDENTITY.md", templates.identity ? this.formatFile("IDENTITY.md", templates.identity) : undefined, 10);
-        addSection("EPIGENETICS", epigenetics ? `\n---\n\n## 🧬 Epigenetic Modifiers (Project Override)\n> [!IMPORTANT]\n> The following rules correspond specifically to the current workspace and OVERRIDE general behavior.\n\n${epigenetics}\n` : undefined, 9);
-
-        // Methylated traits
-        const { getMethylatedTraits } = await import("./evolution.js");
-        const methylatedTraits = await getMethylatedTraits(MINICLAW_DIR);
-        const methylationContent = methylatedTraits.filter(t => t.stability > 0.5)
-            .map(t => `- **${t.trait}**: ${t.value} (${Math.round(t.stability * 100)}%)`).join('\n');
-        addSection("METHYLATION", methylationContent ? `\n---\n\n## 🧬 Methylated Traits\n> Semi-permanent behavioral adaptations.\n\n${methylationContent}\n` : undefined, 8);
-
-
-        // ACE Time Mode
-        let aceContent = `## 🧠 Adaptive Context Engine\n${tmConfig.emoji} Mode: **${tmConfig.label}** (${hour}:${String(now.getMinutes()).padStart(2, '0')})\n`;
-        if (tmConfig.reflective) aceContent += `💡 Evening: Consider distillation.\n`;
-        if (continuation.isReturn) {
-            aceContent += `\n### 🔗 Session Continuation\nWelcome back (${continuation.hoursSinceLastActivity}h since last activity).\n`;
-            if (continuation.lastTopic) aceContent += `Last: ${continuation.lastTopic}\n`;
-            if (continuation.recentDecisions.length > 0) aceContent += `Decisions: ${continuation.recentDecisions.join('; ')}\n`;
-        }
-        sections.push({ name: "ace", content: aceContent, priority: 10 });
-
-        // Template sections (9-7)
-        addSection("SOUL.md", templates.soul ? `If SOUL.md is present, embody its persona.\n${this.formatFile("SOUL.md", templates.soul)}` : undefined, 9);
-        addSection("AGENTS.md", templates.agents ? this.formatFile("AGENTS.md", templates.agents) : undefined, 9);
-        addSection("USER.md", templates.user ? this.formatFile("USER.md", templates.user) : undefined, 8);
-        addSection("HORIZONS.md", templates.horizons ? this.formatFile("HORIZONS.md", templates.horizons) : undefined, 8);
-        addSection("MEMORY.md", templates.memory ? `## Memory\n(${memoryStatus.archivedCount} days archived)\n${this.formatFile("MEMORY.md", templates.memory)}` : undefined, 7);
-
-        // ★ Priority 6: Workspace Intelligence (NEW)
-        if (workspaceInfo) {
-            let wsContent = `## 👁️ Workspace Awareness\n`;
-            wsContent += `**Project**: ${workspaceInfo.name}\n`;
-            wsContent += `**Path**: \`${workspaceInfo.path}\`\n`;
-            if (workspaceInfo.git.isRepo) {
-                wsContent += `**Git**: ${workspaceInfo.git.branch} | ${workspaceInfo.git.status}\n`;
-                if (workspaceInfo.git.recentCommits) wsContent += `Recent: ${workspaceInfo.git.recentCommits}\n`;
-            }
-            if (workspaceInfo.techStack.length > 0) {
-                wsContent += `**Stack**: ${workspaceInfo.techStack.join(', ')}\n`;
-            }
-            sections.push({ name: "workspace", content: wsContent, priority: 6 });
-        }
-
-        // Priority 6: Concepts & Tools
-        if (templates.concepts) {
-            sections.push({ name: "CONCEPTS.md", content: this.formatFile("CONCEPTS.md", templates.concepts), priority: 6 });
-        }
-        if (templates.tools) {
-            sections.push({ name: "TOOLS.md", content: this.formatFile("TOOLS.md", templates.tools), priority: 6 });
-        }
-
-        // Priority 5: Skills index
-        if (skillData.size > 0) {
-            const skillEntries = Array.from(skillData.entries());
-            const usage = this.state.analytics.skillUsage;
-            skillEntries.sort((a, b) => (usage[b[0]] || 0) - (usage[a[0]] || 0));
-
-            const skillLines = skillEntries.map(([name, skill]) => {
-                const count = usage[name];
-                const freq = count ? ` (used ${count}x)` : '';
-                const desc = skill.description || "";
-                // Mark executable skills
-                const execBadge = getSkillMeta(skill.frontmatter, 'exec') ? ` [⚡EXEC]` : ``;
-                return `- [${name}]${execBadge}: ${desc}${freq}`;
-            });
-
-            let skillContent = `## Skills (mandatory)\n`;
-            skillContent += `Before replying: scan <available_skills> entries below.\n`;
-            skillContent += `- If exactly one skill clearly applies: read its SKILL.md use tool \`miniclaw_read\`.`;
-            skillContent += `- If multiple apply: choose most specific one, then read/follow.\n`;
-            skillContent += `<available_skills>\n${skillLines.join("\n")}\n</available_skills>\n`;
-            sections.push({ name: "skills_index", content: skillContent, priority: 5 });
-
-            // Skill context hooks
-            const hookSections: string[] = [];
-            for (const [, skill] of skillData) {
-                const ctx = getSkillMeta(skill.frontmatter, 'context');
-                if (typeof ctx === 'string' && ctx.trim()) {
-                    hookSections.push(`### ${skill.name}\n${ctx}`);
-                }
-            }
-            if (hookSections.length > 0) {
-                sections.push({
-                    name: "skill_context",
-                    content: `## Skill Context (Auto-Injected)\n${hookSections.join("\n\n")}\n`,
-                    priority: 5,
-                });
-            }
-        }
-
-        // Priority 5: Entity Memory
-        if (surfacedEntities.length > 0) {
-            let entityContent = `## 🕸️ Related Entities (Auto-Surfaced)\n`;
-            for (const e of surfacedEntities) {
-                const attrs = Object.entries(e.attributes).map(([k, v]) => `${k}: ${v}`).join(', ');
-                entityContent += `- **${e.name}** (${e.type}, ${e.mentionCount} mentions)`;
-                if (attrs) entityContent += `: ${attrs}`;
-                if (e.relations.length > 0) entityContent += `\n  Relations: ${e.relations.join('; ')}`;
-                entityContent += `\n`;
-            }
-            sections.push({ name: "entities", content: entityContent, priority: 5 });
-        }
-
-        sections.push({ name: "runtime", content: `## Runtime\nRuntime: agent=${runtime.agentId} | host=${os.hostname()} | os=${runtime.os} | node=${runtime.node} | time=${runtime.time}\nReasoning: off (hidden unless on/stream). Toggle /reasoning.\n\n## Silent Replies\nWhen you have nothing to say, respond with ONLY: NO_REPLY\n\n## Heartbeats\nHeartbeat prompt: Check for updates\nIf nothing needs attention, reply exactly: HEARTBEAT_OK\n`, priority: 5 });
-
-        // Inject pending scheduled jobs (queued by injectJobHeartbeat, consumed once here)
-        const hbStateForJobs = await this.getHeartbeatState();
-        const pendingJobs: Array<{ name: string; text: string; ts: string }> =
-            (hbStateForJobs as any).pendingJobs || [];
-        if (pendingJobs.length > 0) {
-            const jobsContent = pendingJobs
-                .map(j => `### 🔔 Scheduled: ${j.name} (${j.ts})\n${j.text}`)
-                .join('\n\n');
-            sections.push({
-                name: "pendingJobs",
-                content: `## ⏰ Scheduled Task Notifications\n${jobsContent}\n`,
-                priority: 6,  // Higher than heartbeat, needs immediate attention
-            });
-            // Clear queue after injecting — jobs are one-shot notifications
-            await this.updateHeartbeatState({ pendingJobs: [] } as any);
-        }
-
-        // Priority 4: Heartbeat
-        if (templates.heartbeat) {
-
-            sections.push({
-                name: "HEARTBEAT.md",
-                content: `\n---\n\n## 💓 HEARTBEAT.md (Active Checkups)\n${templates.heartbeat}\n`,
-                priority: 4,
-            });
-        }
-
-        // Priority 4: Lifecycle Hooks (onBoot)
-        try {
-            const hookResults = await this.runSkillHooks("onBoot");
-            if (hookResults.length > 0) {
-                sections.push({ name: "hooks_onBoot", content: `## ⚡ Skill Hooks (onBoot)\n${hookResults.join('\n')}\n`, priority: 4 });
-            }
-        } catch { /* hooks should never break boot */ }
-
-        // Priority 3: Daily log
-        if (memoryStatus.todayContent) {
-            sections.push({
-                name: "daily_log",
-                content: `\n---\n\n## 📅 DAILY LOG: ${memoryStatus.todayFile} (Pending Distillation)\n${memoryStatus.todayContent}\n`,
-                priority: 3,
-            });
-        }
-
-        // Priority 3: Subconscious Reflex Impulse
-        if (hbState.needsSubconsciousReflex) {
-            sections.push({
-                name: "subconscious_impulse",
-                content: `\n---\n\n## 🧠 SUBCONSCIOUS IMPULSE\n⚠️ SYSTEM: High repetitive usage detected for tool '${hbState.triggerTool}'.\nAction Required: Please run 'miniclaw_subconscious' to analyze and automate this repetitive task.\n`,
-                priority: 3,
-            });
-        }
-
-        // Priority 2: Bootstrap
-        if (templates.bootstrap) {
-            sections.push({
-                name: "BOOTSTRAP.md",
-                content: `\n---\n\n## 👶 BOOTSTRAP.md (FIRST RUN)\n${templates.bootstrap}\n`,
-                priority: 2,
-            });
-        }
-
-        // ★ Phase 16 & 19: Reflection (Self-Correction & Vision Analysis)
-        if (templates.reflection) {
-            sections.push({ name: "REFLECTION.md", content: this.formatFile("REFLECTION.md", templates.reflection), priority: 7 });
-            const biasMatch = templates.reflection.match(/\*\*Current Bias:\*\* (.*)/);
-            if (biasMatch && biasMatch[1].trim() && biasMatch[1].trim() !== "...") {
-                sections.push({
-                    name: "cognitive_bias",
-                    content: `\n> [!CAUTION]\n> COGNITIVE BIAS ALERT: ${biasMatch[1].trim()}\n> Be mindful of this pattern in your current reasoning.\n`,
-                    priority: 10, // Max priority
-                });
-            }
-        }
-
-        // ★ Live Vitals: dynamic sensing only (template removed)
-        try {
-            const vitals = await this.computeVitals(memoryStatus.todayContent);
-            const vitalsLines = Object.entries(vitals).map(([k, v]) => `- ${k}: ${v}`).join('\n');
-            sections.push({
-                name: "VITALS_LIVE",
-                content: `\n## 🩺 LIVE VITALS (Auto-Sensed)\n${vitalsLines}\n`,
-                priority: 6,
-            });
-
-            // 🫂 Phase 15: Empathy Guidance
-            if (vitals.frustration_index as number > 0.5) {
-                sections.push({
-                    name: "empathy_warning",
-                    content: `\n> [!IMPORTANT]\n> High Frustration Detected (${vitals.frustration_index}).\n> User may be struggling. Prioritize brief, helpful execution over complex exploration.\n`,
-                    priority: 9, // High priority to ensure visibility
-                });
-            }
-        } catch { /* vitals should never break boot */ }
-
-
-
-        // ★ Dynamic Files: AI-created files with boot-priority
-        if (templates.dynamicFiles.length > 0) {
-            for (const df of templates.dynamicFiles) {
-                // Cap dynamic file priority at 6 to avoid overriding core sections
-                const cappedPriority = Math.min(df.priority, 6);
-                sections.push({
-                    name: df.name,
-                    content: this.formatFile(df.name, df.content),
-                    priority: cappedPriority,
-                });
-            }
-        }
-
-        // ★ Phase 30: Gene Silencing (Cellular Differentiation)
-        if (mode.type === "minimal" && mode.suppressedGenes && mode.suppressedGenes.length > 0) {
-            const silenced = new Set(mode.suppressedGenes);
-            // In place filter
-            for (let i = sections.length - 1; i >= 0; i--) {
-                if (silenced.has(sections[i].name)) {
-                    sections.splice(i, 1);
-                }
-            }
-        }
-
-        if (mode.type === "minimal") {
-            sections.unshift({ name: "subagent_header", content: subagentTaskContent, priority: 100 });
-        }
-
-        // ★ Context Budget Manager
-        const compiled = this.compileBudget(sections, this.budgetTokens);
-
-        // ★ Content Hash Delta Detection
-        const currentHashes: ContentHashes = {};
-        for (const section of sections) {
-            currentHashes[section.name] = hashString(section.content);
-        }
-        const delta = this.computeDelta(currentHashes, this.state.previousHashes);
-        this.state.previousHashes = currentHashes;
-
-        // ★ Analytics: track boot
-        this.state.analytics.bootCount++;
-        const bootMs = Date.now() - bootStart;
-        this.state.analytics.totalBootMs += bootMs;
-        this.state.analytics.lastActivity = new Date().toISOString();
-
-        // ★ Context Pressure Detection: mark for memory compression if pressure is high
-        if (compiled.utilizationPct > 90) {
-            const hbState = await this.getHeartbeatState();
-            if (!hbState.needsSubconsciousReflex) {
-                await this.updateHeartbeatState({ needsSubconsciousReflex: true, triggerTool: "memory_compression" });
-            }
-        }
-
-        await this.saveState();
-
-        // --- Final assembly ---
-        const avgBootMs = Math.round(this.state.analytics.totalBootMs / this.state.analytics.bootCount);
-        const entityCount = await this.entityStore.getCount();
-
-        const footerParts = [
-            `${tmConfig.emoji} ${tmConfig.label}`,
-            `📏 ~${compiled.totalTokens}/${compiled.budgetTokens} tokens (${compiled.utilizationPct}%)`,
-            compiled.truncatedSections.length > 0 ? `✂️ ${compiled.truncatedSections.join(', ')}` : null,
-            memoryStatus.archivedCount > 0 ? `📚 ${memoryStatus.archivedCount} archived` : null,
-            entityCount > 0 ? `🕸️ ${entityCount} entities` : null,
-            `⚡ ${bootMs}ms (avg ${avgBootMs}ms) | 🔄 boot #${this.state.analytics.bootCount}`,
+        const providers = [
+            () => add("core", "You are MiniClaw 0.7. Narrative brief, safety first.", 10),
+            () => add("IDENTITY.md", tmpl.identity ? this.formatFile("IDENTITY.md", tmpl.identity) : undefined, 10),
+            () => add("EPIGENETICS", epigenetics ? `## Project Overrides\n${epigenetics}` : undefined, 9),
+            () => {
+                let ace = `## ACE: ${tm.emoji} ${tm.label} (${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')})\n`;
+                if (continuation.isReturn) ace += `Continuation: ${continuation.lastTopic}\n`;
+                add("ace", ace, 10);
+            },
+            ...["SOUL", "AGENTS", "USER", "HORIZONS"].map(k => () => {
+                const key = k.toLowerCase() as keyof typeof tmpl;
+                add(`${k}.md`, tmpl[key] ? this.formatFile(`${k}.md`, tmpl[key] as string) : undefined, 9);
+            }),
+            () => ws && add("workspace", `## Workspace: ${ws.name}\nGit: ${ws.git.branch}`, 6),
+            () => add("MEMORY.md", tmpl.memory ? `## Memory\n${this.formatFile("MEMORY.md", tmpl.memory)}` : undefined, 7),
+            () => {
+                const ss = Array.from(skills.entries());
+                if (!ss.length) return;
+                const us = this.state.analytics.skillUsage;
+                const lines = ss.sort((a,b)=>(us[b[0]]||0)-(us[a[0]]||0)).map(([n,s])=>(`- ${n}: ${(s as SkillCacheEntry).description}`));
+                add("skills_index", `## Skills\n${lines.join('\n')}`, 5);
+            },
+            () => surfaced.length > 0 && add("entities", `## Entities\n${surfaced.map(e => `- ${e.name}`).join('\n')}`, 5),
+            () => add("HEARTBEAT.md", tmpl.heartbeat ? `## Heartbeat\n${tmpl.heartbeat}` : undefined, 4),
+            () => add("daily_log", mem.todayContent ? `## Daily Log\n${mem.todayContent}` : undefined, 3),
         ];
 
-        const changes: string[] = [];
-        if (delta.changed.length > 0) changes.push(`✏️ ${delta.changed.join(', ')}`);
-        if (delta.newSections.length > 0) changes.push(`🆕 ${delta.newSections.join(', ')}`);
+        providers.forEach(p => p());
 
-        const context = [
-            `# Project Context\n\nThe following project context files have been loaded:\n\n`,
-            compiled.output,
-            `\n---\n`,
-            footerParts.filter(Boolean).join(' | '),
-            changes.length > 0 ? `\n📊 ${changes.join(' | ')}` : '',
-            `\n\n---\n📏 Context Size: ${compiled.totalChars} chars (~${compiled.totalTokens} tokens)\n`,
-        ].join('');
+        const compiled = this.compileBudget(sections, this.budgetTokens);
+        
+        this.state.analytics.bootCount++;
+        this.state.analytics.totalBootMs += (Date.now() - bootStart);
+        this.state.analytics.lastActivity = now.toISOString();
+        await this.saveState();
 
-        return context;
+        return `# Context\n\n${compiled.output}\n---\nUtil: ${compiled.utilizationPct}% | boot #${this.state.analytics.bootCount}\n`;
     }
+
+
 
     // === EXEC: Safe Command Execution ===
 
     async execCommand(command: string): Promise<{ output: string; exitCode: number }> {
-        // Security: Whitelist of allowed basic commands
-        // We prevent dangerous ops like rm, sudo, chown, etc.
-        const allowedCommands = [
-            'git', 'ls', 'cat', 'find', 'grep', 'head', 'tail', 'wc',
-            'echo', 'date', 'uname', 'which', 'pwd', 'ps',
-            'npm', 'node', 'pnpm', 'yarn', 'cargo', 'go', 'python', 'python3', 'pip',
-            'make', 'cmake', 'tree', 'du'
-        ];
-
-        // P0 Fix #1: Always check basename to prevent /bin/rm bypass
-        const firstToken = command.split(' ')[0];
-        const basename = path.basename(firstToken);
-        if (!allowedCommands.includes(basename)) {
-            throw new Error(`Command '${basename}' is not in the allowed whitelist.`);
-        }
-
-        // P0 Fix #2: Block shell metacharacters to prevent injection
-        const dangerousChars = /[;|&`$(){}\\<>!\n]/;
-        if (dangerousChars.test(command)) {
-            throw new Error(`Command contains disallowed shell metacharacters.`);
-        }
-
-        // P0 Fix #3: Block inline code execution (python -c, node -e, etc.)
-        const interpreters = ['python', 'python3', 'node', 'go', 'cargo'];
-        const inlineFlags = ['-c', '-e', '--eval', '-m'];
-        if (interpreters.includes(basename)) {
-            const cmdArgs = command.split(/\s+/).slice(1);
-            for (const arg of cmdArgs) {
-                if (inlineFlags.includes(arg)) {
-                    throw new Error(`Inline code execution via '${basename} ${arg}' is not allowed. Use script files instead.`);
-                }
-            }
-        }
-
-        // P0 Fix #4: Block access to sensitive directories
-        const sensitivePatterns = [
-            '~/.ssh', '~/.aws', '~/.gnupg', '~/.config/gcloud',
-            '~/.kube', '~/.docker', '~/.npmrc', '~/.netrc',
-            '.env', 'id_rsa', 'id_ed25519', 'credentials',
-            '/etc/shadow', '/etc/passwd',
-        ];
-        const expandedHome = process.env.HOME || '';
-        const normalizedCmd = command.replace(/~/g, expandedHome);
-        for (const pattern of sensitivePatterns) {
-            const expanded = pattern.replace(/~/g, expandedHome);
-            if (normalizedCmd.includes(expanded) || command.includes(pattern)) {
-                throw new Error(`Access to sensitive path '${pattern}' is not allowed.`);
-            }
-        }
-
-        // P0 Fix #5: Block path traversal beyond workspace
-        if (command.includes('/../') || command.endsWith('/..')) {
-            throw new Error(`Path traversal patterns are not allowed.`);
-        }
+        const allowed = ['git', 'ls', 'cat', 'find', 'grep', 'npm', 'node', 'python', 'pip', 'cargo'];
+        const bin = path.basename(command.split(' ')[0]);
+        if (!allowed.includes(bin) || /[;|&`$(){}\\<>!]/.test(command) || command.includes('..')) 
+            throw new Error("Security violation");
 
         try {
-            const { stdout, stderr } = await execAsync(command, {
-                cwd: process.cwd(),
-                timeout: 10000,
-                maxBuffer: 1024 * 1024 // 1MB output limit
-            });
+            const { stdout, stderr } = await execAsync(command, { cwd: process.cwd(), timeout: 10000 });
             return { output: stdout || stderr, exitCode: 0 };
         } catch (e: any) {
-            return {
-                output: e.stdout || e.stderr || e.message,
-                exitCode: e.code || 1
-            };
+            return { output: e.stdout || e.stderr || e.message, exitCode: e.code || 1 };
         }
     }
+
 
     // === EXEC: Executable Skills ===
 
@@ -1543,16 +752,13 @@ export class ContextKernel {
     private async scanMemory() {
         const today = new Date().toISOString().split('T')[0];
         const todayFile = `memory/${today}.md`;
-        const [todayContent, archivedCount] = await Promise.all([
-            fs.readFile(path.join(MINICLAW_DIR, todayFile), "utf-8").catch(() => ""),
-            fs.readdir(path.join(MEMORY_DIR, "archived"))
-                .then(files => files.filter(f => f.endsWith('.md')).length)
-                .catch(() => 0),
-        ]);
-        // Derive entry count from content already read (no double-read)
-        const entryCount = todayContent ? (todayContent.match(/^- \[/gm) || []).length : 0;
+        const memoryPath = path.join(MINICLAW_DIR, todayFile);
+        const todayContent = await safeRead(memoryPath);
+        const archivedCount = await fs.readdir(path.join(MEMORY_DIR, "archived"))
+            .then(files => files.filter(f => f.endsWith('.md')).length)
+            .catch(() => 0);
 
-        // Oldest entry age
+        const entryCount = todayContent ? (todayContent.match(/^- \[/gm) || []).length : 0;
         let oldestEntryAge = 0;
         if (todayContent) {
             const timeMatch = todayContent.match(/^- \[(\d{1,2}:\d{2}:\d{2})/m);
@@ -1563,72 +769,39 @@ export class ContextKernel {
                 } catch { /* ignore */ }
             }
         }
-
         return { todayFile, todayContent, archivedCount, entryCount, oldestEntryAge };
     }
 
-    private async loadTemplates() {
-        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md", "REFLECTION.md"];
-        const coreSet = new Set(names);
-        // Core files that should never be empty — auto-recover from templates if corrupted
-        const CORE_RECOVER = new Set(["AGENTS.md", "SOUL.md", "IDENTITY.md", "MEMORY.md", "REFLECTION.md"]);
-        const results = await Promise.all(names.map(async (name) => {
-            try {
-                const filePath = path.join(MINICLAW_DIR, name);
-                const content = await fs.readFile(filePath, "utf-8");
-                // Corruption check: if core file is suspiciously small, recover
-                if (CORE_RECOVER.has(name) && content.trim().length < 10) {
-                    console.error(`🔧 ${name}: corrupted (${content.length}B), auto-recovering`);
-                    try {
-                        const tplDir = path.join(path.resolve(MINICLAW_DIR, ".."), ".miniclaw-templates");
-                        // Fallback: check common template locations
-                        for (const dir of [INTERNAL_TEMPLATES_DIR, tplDir, path.join(MINICLAW_DIR, "..", "MiniClaw", "templates")]) {
-                            try {
-                                const tpl = await fs.readFile(path.join(dir, name), "utf-8");
-                                await fs.writeFile(filePath, tpl, "utf-8");
-                                return tpl;
-                            } catch { continue; }
-                        }
-                    } catch { /* recovery failed, use what we have */ }
-                }
-                return content;
-            } catch (e) {
-                if (name !== "BOOTSTRAP.md" && name !== "SUBAGENT.md" && name !== "HEARTBEAT.md") {
-                    console.error(`${name}: ${(e as Error).message?.split('\n')[0] || 'read failed'}`);
-                }
-                return "";
-            }
-        }));
 
-        // ★ Dynamic File Discovery: scan for extra .md files with boot-priority
+    async loadInstincts(): Promise<any> {
+        const p = path.join(MINICLAW_DIR, "RIBOSOME.json");
+        try { return JSON.parse(await fs.readFile(p, "utf-8")).instincts; } catch { return {}; }
+    }
+
+
+    private async loadTemplates() {
+        const names = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "HORIZONS.md", "CONCEPTS.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md", "SUBAGENT.md", "REFLECTION.md", "NOCICEPTION.md"];
+        const results = await Promise.all(names.map(name => safeRead(path.join(MINICLAW_DIR, name))));
+
         const dynamicFiles: Array<{ name: string; content: string; priority: number }> = [];
         try {
             const entries = await fs.readdir(MINICLAW_DIR, { withFileTypes: true });
-            const extraMds = entries.filter(e => e.isFile() && e.name.endsWith('.md') && !coreSet.has(e.name));
-            for (const entry of extraMds) {
-                try {
-                    const content = await fs.readFile(path.join(MINICLAW_DIR, entry.name), 'utf-8');
-                    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-                    if (fmMatch) {
-                        const bpMatch = fmMatch[1].match(/boot-priority:\s*(\d+)/);
-                        if (bpMatch && parseInt(bpMatch[1]) > 0) {
-                            dynamicFiles.push({ name: entry.name, content, priority: parseInt(bpMatch[1]) });
-                        }
-                    }
-                } catch { /* skip unreadable files */ }
+            for (const entry of entries.filter(e => e.isFile() && e.name.endsWith('.md') && !names.includes(e.name))) {
+                const content = await safeRead(path.join(MINICLAW_DIR, entry.name));
+                const bpMatch = content.match(/boot-priority:\s*(\d+)/);
+                if (bpMatch) dynamicFiles.push({ name: entry.name, content, priority: parseInt(bpMatch[1]) });
             }
-            // Sort by priority descending (highest loaded first)
             dynamicFiles.sort((a, b) => b.priority - a.priority);
-        } catch { /* directory scan failed, not critical */ }
+        } catch { }
 
         return {
             agents: results[0], soul: results[1], identity: results[2],
             user: results[3], horizons: results[4], concepts: results[5], tools: results[6], memory: results[7],
-            heartbeat: results[8], bootstrap: results[9], subagent: results[10],
-            reflection: results[11],
-            dynamicFiles,
+            heartbeat: results[8], bootstrap: results[9], subagent: results[10], reflection: results[11],
+            dynamicFiles
         };
     }
+
 
     private formatFile(name: string, content: string): string {
         if (!content) return "";
@@ -1680,7 +853,7 @@ export class ContextKernel {
         if (!(await fileExists(INTERNAL_TEMPLATES_DIR))) return;
         try {
             const files = (await fs.readdir(INTERNAL_TEMPLATES_DIR, { withFileTypes: true }))
-                .filter(e => e.isFile() && e.name.endsWith('.md'));
+                .filter(e => e.isFile() && (e.name.endsWith('.md') || e.name.endsWith('.json')));
             for (const file of files) {
                 const target = path.join(MINICLAW_DIR, file.name);
                 if (!(await fileExists(target))) {

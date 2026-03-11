@@ -98,75 +98,75 @@ export function parseFrontmatter(content: string): Record<string, unknown> {
 
 // ─── File I/O ────────────────────────────────────────────────────────────────
 
-export async function atomicWrite(filePath: string, data: string): Promise<void> {
-    const tmp = filePath + ".tmp";
-    await fs.writeFile(tmp, data, "utf-8");
-    await fs.rename(tmp, filePath);
+export async function atomicWrite(filePath: string, content: string): Promise<void> {
+    const tempPath = `${filePath}.${Math.random().toString(36).slice(2)}.tmp`;
+    await fs.writeFile(tempPath, content, "utf-8");
+    await fs.rename(tempPath, filePath);
 }
+
+export const safeRead = async (p: string, defaultValue = ""): Promise<string> => {
+    try { return await fs.readFile(p, "utf-8"); } catch { return defaultValue; }
+};
+
+export const safeReadJson = async <T>(p: string, defaultValue: T): Promise<T> => {
+    try { return JSON.parse(await fs.readFile(p, "utf-8")) as T; } catch { return defaultValue; }
+};
+
+export const safeWrite = async (p: string, data: string): Promise<void> => {
+    try { await fs.writeFile(p, data, "utf-8"); } catch { /* ignore */ }
+};
+
+export const safeAppend = async (p: string, data: string): Promise<void> => {
+    try { await fs.appendFile(p, data, "utf-8"); } catch { /* ignore */ }
+};
+
+export const fileExists = (p: string) => fs.access(p).then(() => true, () => false);
 
 export function hashString(s: string): string {
     return crypto.createHash("md5").update(s).digest("hex");
 }
 
-// ─── MCP Response Helpers ────────────────────────────────────────────────────
+// ─── Math & Logic ────────────────────────────────────────────────────────────
 
-/** Standard MCP text response (eliminates 49+ repetitions) */
+export function calculateSimilarity(str1: string, str2: string): number {
+    const s1 = str1.toLowerCase(), s2 = str2.toLowerCase();
+    if (s1 === s2) return 1.0;
+    if (!s1 || !s2) return 0.0;
+    const pairs1 = getPairs(s1), pairs2 = getPairs(s2);
+    let hit = 0, union = pairs1.length + pairs2.length;
+    for (const p1 of pairs1) {
+        const idx = pairs2.indexOf(p1);
+        if (idx !== -1) { hit++; pairs2.splice(idx, 1); }
+    }
+    return (2.0 * hit) / union;
+}
+
+const getPairs = (s: string) => {
+    const p = [];
+    for (let i = 0; i < s.length - 1; i++) p.push(s.substring(i, i + 2));
+    return p;
+};
+
+export const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+export const blend = (curr: number, target: number, rate = 0.3) => curr + (target - curr) * rate;
+
+// ─── Time ────────────────────────────────────────────────────────────────────
+
+export const pick = <T extends object, K extends keyof T>(obj: T, keys: K[]): Pick<T, K> => {
+    const res = {} as any;
+    for (const k of keys) if (obj[k] !== undefined) res[k] = obj[k];
+    return res;
+};
+
+export const today = () => new Date().toISOString().split('T')[0];
+export const nowIso = () => new Date().toISOString();
+export const daysSince = (t: string | number | Date) => (Date.now() - new Date(t).getTime()) / 86400000;
+export const hoursSince = (t: string | number | Date) => (Date.now() - new Date(t).getTime()) / 3600000;
+
+// ─── MCP Helpers ──────────────────────────────────────────────────────────────
+
 export const textResult = (text: string, isError = false) => ({
     content: [{ type: "text" as const, text }],
     ...(isError && { isError: true })
 });
-
-/** Standard MCP error response */
-export const errorResult = (msg: string) => textResult(`❌ ${msg}`);
-
-// ─── Common Helpers ──────────────────────────────────────────────────────────
-
-/** Today's date as YYYY-MM-DD */
-export const today = () => new Date().toISOString().split('T')[0];
-
-/** Current timestamp in ISO format */
-export const nowIso = () => new Date().toISOString();
-
-/** Current time string HH:MM:SS */
-export const currentTime = () => new Date().toLocaleTimeString();
-
-/** Check if a path exists (avoids try/catch boilerplate) */
-export const fileExists = (p: string) => fs.access(p).then(() => true, () => false);
-
-/** Safe file read - returns default value on error */
-export const safeRead = async (p: string, defaultValue = ""): Promise<string> => {
-    try { return await fs.readFile(p, "utf-8"); } catch { return defaultValue; }
-};
-
-/** Safe JSON read - returns default value on error */
-export const safeReadJson = async <T>(p: string, defaultValue: T): Promise<T> => {
-    try { return JSON.parse(await fs.readFile(p, "utf-8")) as T; } catch { return defaultValue; }
-};
-
-/** Safe file write - ignores errors */
-export const safeWrite = async (p: string, data: string): Promise<void> => {
-    try { await fs.writeFile(p, data, "utf-8"); } catch { /* ignore */ }
-};
-
-/** Safe append - ignores errors */
-export const safeAppend = async (p: string, data: string): Promise<void> => {
-    try { await fs.appendFile(p, data, "utf-8"); } catch { /* ignore */ }
-};
-
-/** Calculate days since a timestamp */
-export const daysSince = (timestamp: string | number | Date): number => {
-    const then = new Date(timestamp).getTime();
-    return (Date.now() - then) / (1000 * 60 * 60 * 24);
-};
-
-/** Calculate hours since a timestamp */
-export const hoursSince = (timestamp: string | number | Date): number => {
-    const then = new Date(timestamp).getTime();
-    return (Date.now() - then) / (1000 * 60 * 60);
-};
-
-/** Clamp number to range */
-export const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-
-/** Blend two values (linear interpolation) */
-export const blend = (current: number, target: number, rate = 0.3) => current + (target - current) * rate;
+export const errorResult = (msg: string) => textResult(`❌ ${msg}`, true);

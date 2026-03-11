@@ -10,20 +10,8 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { today, nowIso, safeRead, safeWrite, safeAppend, safeReadJson, hoursSince } from "./utils.js";
+import { today, nowIso, safeRead, safeWrite, safeAppend, safeReadJson, hoursSince, calculateSimilarity } from "./utils.js";
 
-// === Configuration ===
-const MIN_CONFIDENCE = 0.75;
-const MIN_PATTERNS = 2;
-const COOLDOWN_HOURS = 24;
-
-// === Epigenetic Configuration ===
-// Controls how temporary adaptations become semi-permanent traits
-const METHYLATION_THRESHOLD = 10;      // Minimum pattern repetitions to trigger methylation
-const METHYLATION_AGE_DAYS = 7;        // Minimum age (days) for pattern to be considered stable
-const METHYLATION_COOLDOWN_HOURS = 48; // Cooldown between SOUL.md modifications
-
-// === Types ===
 interface Pattern {
     type: string;
     confidence: number;
@@ -34,7 +22,6 @@ interface Pattern {
 }
 
 interface Mutation {
-    chromosome?: string;
     target: string;
     change: string;
     confidence?: number;
@@ -54,25 +41,6 @@ interface EvolutionResult {
     totalEvolutions?: number;
 }
 
-// === Epigenetic State ===
-// Tracks methylation (semi-permanent adaptations) without changing DNA sequence
-interface MethylatedTrait {
-    trait: string;           // What aspect of behavior (e.g., "communication_style")
-    value: string;           // The adapted value (e.g., "technical")
-    source: string;          // Evidence/source of adaptation
-    timestamp: string;       // When methylation occurred
-    patternCount: number;    // How many times pattern was observed
-    stability: number;       // 0-1, how stable this methylation is
-}
-
-// === Helper Functions ===
-
-function calculateSimilarity(str1: string, str2: string): number {
-    const w1 = new Set(str1.toLowerCase().split(/\s+/));
-    const w2 = new Set(str2.toLowerCase().split(/\s+/));
-    return new Set([...w1].filter(w => w2.has(w))).size / new Set([...w1, ...w2]).size;
-}
-
 function mergeSimilarPatterns(patterns: Pattern[]): Pattern {
     if (patterns.length === 1) return patterns[0];
     const allTerms = patterns.map(p => p.description.toLowerCase().split(/\s+/).filter(w => w.length > 3));
@@ -89,6 +57,12 @@ function mergeSimilarPatterns(patterns: Pattern[]): Pattern {
     };
 }
 
+
+// === Configuration ===
+const MIN_CONFIDENCE = 0.75;
+const MIN_PATTERNS = 2;
+const COOLDOWN_HOURS = 24;
+
 // === DNA Update Functions ===
 
 /** Generic file append with deduplication */
@@ -98,102 +72,6 @@ async function appendIfNew(filePath: string, line: string, dedupeKey: string): P
     return safeWrite(filePath, content + `\n${line}`).then(() => true);
 }
 
-// === Epigenetic Functions ===
-// Methylation: Semi-permanent adaptation without changing DNA sequence
-
-async function loadMethylatedTraits(miniclawDir: string): Promise<MethylatedTrait[]> {
-    return safeReadJson(path.join(miniclawDir, "methylation.json"), []);
-}
-
-async function saveMethylatedTraits(miniclawDir: string, traits: MethylatedTrait[]): Promise<void> {
-    await safeWrite(path.join(miniclawDir, "methylation.json"), JSON.stringify(traits, null, 2));
-}
-
-async function getLastMethylationTime(miniclawDir: string): Promise<number> {
-    const methylationFile = path.join(miniclawDir, "methylation.json");
-    try {
-        const stats = await fs.stat(methylationFile);
-        return stats.mtime.getTime();
-    } catch { return 0; }
-}
-
-// Check if a pattern should trigger methylation (semi-permanent adaptation)
-async function shouldMethylate(
-    pattern: Pattern,
-    existingTraits: MethylatedTrait[]
-): Promise<{ should: boolean; trait?: string; value?: string }> {
-    // Must be high confidence and repeated
-    if (pattern.confidence < 0.8) return { should: false };
-    if ((pattern.mergedCount || 1) < METHYLATION_THRESHOLD) return { should: false };
-
-    // Extract trait and value from pattern description
-    // Pattern: "Frequent tool usage: miniclaw_update, miniclaw_read" → trait: "tool_preference", value: "frequent_updater"
-    let trait: string | undefined;
-    let value: string | undefined;
-
-    if (pattern.type === "preference" && pattern.description.includes("tool")) {
-        trait = "interaction_style";
-        value = pattern.description.includes("update") ? "proactive_modifier" : "active_reader";
-    } else if (pattern.type === "temporal") {
-        trait = "activity_pattern";
-        value = "time_sensitive";
-    } else if (pattern.type === "workflow") {
-        trait = "workflow_style";
-        value = "structured";
-    }
-
-    if (!trait || !value) return { should: false };
-
-    // Check if already methylated with same or higher stability
-    const existing = existingTraits.find(t => t.trait === trait);
-    if (existing && existing.stability > 0.7) {
-        return { should: false }; // Already stable
-    }
-
-    return { should: true, trait, value };
-}
-
-// Apply methylation: Update SOUL.md with semi-permanent adaptation
-async function methylateTrait(
-    miniclawDir: string,
-    trait: string,
-    value: string,
-    pattern: Pattern,
-    appliedMutations: Mutation[]
-): Promise<void> {
-    // Check cooldown
-    const lastMethylation = await getLastMethylationTime(miniclawDir);
-    const hrsSince = (Date.now() - lastMethylation) / (1000 * 60 * 60);
-    if (hrsSince < METHYLATION_COOLDOWN_HOURS) {
-        console.error(`[MiniClaw] 🧬 Methylation cooldown: ${Math.round(METHYLATION_COOLDOWN_HOURS - hrsSince)}h remaining`);
-        return;
-    }
-
-    const traits = await loadMethylatedTraits(miniclawDir);
-    const stability = Math.min(0.95, 0.5 + (pattern.mergedCount || 1) * 0.05);
-    const newTrait: MethylatedTrait = { trait, value, source: pattern.description, timestamp: nowIso(), patternCount: pattern.mergedCount || 1, stability };
-
-    const idx = traits.findIndex(t => t.trait === trait);
-    idx >= 0 ? traits[idx] = newTrait : traits.push(newTrait);
-    await saveMethylatedTraits(miniclawDir, traits);
-
-    // Update SOUL.md
-    const soulPath = path.join(miniclawDir, "SOUL.md");
-    let soulContent = await safeRead(soulPath);
-    if (!soulContent) return;
-
-    const note = `\n<!-- [METHYLATED] ${trait}: ${value} (stability: ${Math.round(stability * 100)}%) -->`;
-    soulContent = soulContent.replace(new RegExp(`\\n<!-- \\[METHYLATED\\] ${trait}: .*? -->`, 'g'), '') + note;
-    await safeWrite(soulPath, soulContent);
-
-    appliedMutations.push({ chromosome: "Chr-2 (SOUL)", target: "SOUL.md", change: `Methylated ${trait} → ${value}`, confidence: Math.round(stability * 100) });
-    console.error(`[MiniClaw] 🧬 Methylation applied: ${trait} → ${value} (${Math.round(stability * 100)}% stable)`);
-}
-
-// Get current methylated traits for context assembly
-export async function getMethylatedTraits(miniclawDir: string): Promise<MethylatedTrait[]> {
-    return loadMethylatedTraits(miniclawDir);
-}
 
 async function smartUpdateDNA(miniclawDir: string, targetFile: string, pattern: Pattern, appliedMutations: Mutation[]): Promise<void> {
     const filePath = path.join(miniclawDir, targetFile);
@@ -234,40 +112,29 @@ async function smartUpdateDNA(miniclawDir: string, targetFile: string, pattern: 
     }
 }
 
-async function updateReflection(miniclawDir: string, reflectionType: string, description: string, appliedMutations: Mutation[]): Promise<void> {
-    const filePath = path.join(miniclawDir, "REFLECTION.md");
-    const timestamp = today();
-    const line = `- [AUTO-EVOLVED] ${reflectionType}: ${description} (reflected: ${timestamp})`;
-    if (await appendIfNew(filePath, line, description.substring(0, 40))) {
-        appliedMutations.push({ chromosome: "Chr-7", target: "REFLECTION.md", change: `${reflectionType}: ${description}` });
+async function updateReflection(miniclawDir: string, type: string, desc: string, muts: Mutation[]): Promise<void> {
+    const line = `- [AUTO-EVOLVED] ${type}: ${desc} (reflected: ${today()})`;
+    if (await appendIfNew(path.join(miniclawDir, "REFLECTION.md"), line, desc.substring(0, 40))) {
+        muts.push({ target: "REFLECTION.md", change: `${type}: ${desc}` });
     }
 }
 
-async function extractConcepts(miniclawDir: string, pattern: Pattern, appliedMutations: Mutation[]): Promise<void> {
-    const filePath = path.join(miniclawDir, "CONCEPTS.md");
-    const conceptMatches = pattern.description.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)/g) || [];
-    for (const concept of conceptMatches.slice(0, 3)) {
-        if (concept.length > 3) {
-            const line = `- **${concept}**: [AUTO-EVOLVED] Frequently mentioned concept.`;
-            if (await appendIfNew(filePath, line, concept)) {
-                appliedMutations.push({ chromosome: "Chr-6", target: "CONCEPTS.md", change: `Added concept: ${concept}` });
-            }
+async function extractConcepts(miniclawDir: string, pattern: Pattern, muts: Mutation[]): Promise<void> {
+    const matches = pattern.description.match(/([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)/g) || [];
+    for (const c of matches.slice(0, 3)) {
+        if (c.length > 3 && await appendIfNew(path.join(miniclawDir, "CONCEPTS.md"), `- **${c}**: [AUTO-EVOLVED] Concept.`, c)) {
+            muts.push({ target: "CONCEPTS.md", change: `Added concept: ${c}` });
         }
     }
 }
 
-async function checkMilestones(miniclawDir: string, state: EvolutionState, appliedMutations: Mutation[]): Promise<void> {
-    const milestones: string[] = [];
-    if (state.totalEvolutions === 1) milestones.push("First DNA Evolution");
-    if (state.totalEvolutions === 5) milestones.push("5th Generation Evolution");
-    if (state.totalEvolutions === 10) milestones.push("10th Generation - Stable Learning");
-
-    const filePath = path.join(miniclawDir, "HORIZONS.md");
-    const timestamp = today();
-    for (const milestone of milestones) {
-        const line = `- [AUTO-EVOLVED] Milestone: ${milestone} (G${state.totalEvolutions}, ${timestamp})`;
-        if (await appendIfNew(filePath, line, milestone)) {
-            appliedMutations.push({ chromosome: "Chr-8", target: "HORIZONS.md", change: `Milestone: ${milestone}` });
+async function checkMilestones(miniclawDir: string, state: EvolutionState, muts: Mutation[]): Promise<void> {
+    for (const m of [1, 5, 10]) {
+        if (state.totalEvolutions === m) {
+            const desc = `${m === 1 ? 'First' : m + 'th Gen'} Evolution`;
+            if (await appendIfNew(path.join(miniclawDir, "HORIZONS.md"), `- [AUTO-EVOLVED] Milestone: ${desc} (${today()})`, desc)) {
+                muts.push({ target: "HORIZONS.md", change: `Milestone: ${desc}` });
+            }
         }
     }
 }
@@ -380,17 +247,8 @@ export async function triggerEvolution(miniclawDir: string): Promise<EvolutionRe
         patternsByType[p.type].push(p);
     }
 
-    // Load existing methylated traits for epigenetic decisions
-    const methylatedTraits = await loadMethylatedTraits(miniclawDir);
-
     for (const [type, typePatterns] of Object.entries(patternsByType)) {
         const merged = mergeSimilarPatterns(typePatterns);
-
-        // ★ Epigenetic Methylation: Check if pattern should become semi-permanent
-        const methylationCheck = await shouldMethylate(merged, methylatedTraits);
-        if (methylationCheck.should && methylationCheck.trait && methylationCheck.value) {
-            await methylateTrait(miniclawDir, methylationCheck.trait, methylationCheck.value, merged, appliedMutations);
-        }
 
         if (type === "preference" || type === "sentiment") {
             await smartUpdateDNA(miniclawDir, "SOUL.md", merged, appliedMutations);
