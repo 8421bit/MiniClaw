@@ -11,7 +11,7 @@
 </div>
 
 > **🔥 MiniClaw 是一个独立的开源项目，灵感源自 [OpenClaw](https://github.com/openclaw/openclaw) 。**
-> OpenClaw 专注于多渠道消息网关（WhatsApp/Telegram/Discord），MiniClaw 专注于**IDE 内 AI 副驾驶的记忆与进化**。二者场景互补，而非替代关系。
+> MiniClaw 专注于**IDE 内 AI 副驾驶的记忆与进化**。
 
 ---
 
@@ -128,7 +128,7 @@ MiniClaw 会**主动感知**你的行为模式。
 
 ## 🏗️ 架构：微内核 (Micro-Kernel)
 
-MiniClaw 采用 **微内核架构** (仅 1477 行核心 TypeScript 可执行代码，不含注释和空行)，避免了传统 Agent 框架的臃肿。
+MiniClaw 采用 **微内核架构** (约 1400~ 行可执行代码)，避免了传统 Agent 框架的臃肿。
 
 | 层级 | 组件 | 职责 |
 |-------|-----------|----------------|
