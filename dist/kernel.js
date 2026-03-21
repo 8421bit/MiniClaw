@@ -441,7 +441,7 @@ export class ContextKernel {
                     ace += `Continuation: ${continuation.lastTopic}\n`;
                 add("ace", ace, 10);
             },
-            ...["SOUL", "AGENTS", "USER", "HORIZONS"].map(k => () => {
+            ...["SOUL", "AGENTS", "USER", "HORIZONS", "TOOLS", "REFLECTION", "CONCEPTS"].map(k => () => {
                 const key = k.toLowerCase();
                 add(`${k}.md`, tmpl[key] ? this.formatFile(`${k}.md`, tmpl[key]) : undefined, 9);
             }),
