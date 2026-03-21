@@ -212,7 +212,7 @@ class SkillCache {
                     referenceFiles: refs.filter(f => f.endsWith('.md'))
                 });
             }
-        } catch {}
+        } catch { }
         return this.cache;
     }
     invalidate() { this.cache.clear(); }
@@ -228,9 +228,9 @@ class EntityStore {
     invalidate() { this.loaded = false; this.entities = []; }
     async load() {
         if (this.loaded) return;
-        try { 
-            this.entities = JSON.parse(await fs.readFile(ENTITIES_FILE, "utf-8")).entities || []; 
-            
+        try {
+            this.entities = JSON.parse(await fs.readFile(ENTITIES_FILE, "utf-8")).entities || [];
+
             // Epic 2: Memory Apoptosis (Decay & GC)
             const nowStr = today();
             let changed = false;
@@ -254,9 +254,9 @@ class EntityStore {
             });
             if (changed) {
                 // Background save, don't await to block boot
-                atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2)).catch(() => {});
+                atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2)).catch(() => { });
             }
-        } catch {}
+        } catch { }
         this.loaded = true;
     }
     async save() { await atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2)); }
@@ -274,9 +274,9 @@ class EntityStore {
             if (this.entities.length >= 1000) this.entities.shift();
             this.entities.push({ ...entity, firstMentioned: now, lastMentioned: now, mentionCount: 1, closeness: 0.1, vitality: 10, lastDecay: now });
         }
-        await this.save(); return e || this.entities[this.entities.length-1];
+        await this.save(); return e || this.entities[this.entities.length - 1];
     }
-    async remove(n: string) { await this.load(); const i = this.entities.findIndex(x => x.name.toLowerCase() === n.toLowerCase()); if (i<0) return false; this.entities.splice(i,1); await this.save(); return true; }
+    async remove(n: string) { await this.load(); const i = this.entities.findIndex(x => x.name.toLowerCase() === n.toLowerCase()); if (i < 0) return false; this.entities.splice(i, 1); await this.save(); return true; }
     async updateSentiment(n: string, s: string) { await this.load(); const e = this.entities.find(x => x.name.toLowerCase() === n.toLowerCase()); if (!e) return false; e.sentiment = s; await this.save(); return true; }
     async link(n: string, r: string) { await this.load(); const e = this.entities.find(x => x.name.toLowerCase() === n.toLowerCase()); if (!e) return false; if (!e.relations.includes(r)) { e.relations.push(r); e.lastMentioned = today(); await this.save(); } return true; }
     async query(n: string) { await this.load(); return this.entities.find(x => x.name.toLowerCase() === n.toLowerCase()) || null; }
@@ -286,16 +286,16 @@ class EntityStore {
         await this.load();
         const l = text.toLowerCase();
         const relevant = this.entities.filter(e => l.includes(e.name.toLowerCase()));
-        
+
         if (relevant.length > 0) {
             relevant.forEach(e => {
                 e.vitality = Math.min(30, (e.vitality || 10) + 2); // Retrieve reinforcement
             });
             // Fire & forget save
-            atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2)).catch(() => {});
+            atomicWrite(ENTITIES_FILE, JSON.stringify({ entities: this.entities }, null, 2)).catch(() => { });
         }
-        
-        return relevant.sort((a,b)=>b.mentionCount-a.mentionCount).slice(0,5);
+
+        return relevant.sort((a, b) => b.mentionCount - a.mentionCount).slice(0, 5);
     }
 }
 
@@ -357,7 +357,7 @@ export class ContextKernel {
         try {
             watch(cwd, { recursive: true }, (eventType, filename) => {
                 if (!filename || filename.includes('node_modules') || filename.includes('.git') || filename.includes('.miniclaw')) return;
-                
+
                 const now = Date.now();
                 if (now - this.watcherState.lastEditTime > 5 * 60 * 1000) {
                     this.watcherState.configEdits = 0;
@@ -373,7 +373,7 @@ export class ContextKernel {
                     this.watcherState.configEdits++;
                     if (this.watcherState.configEdits >= 4 && !this.watcherState.notifiedConfig) {
                         this.watcherState.notifiedConfig = true;
-                        execAsync(`osascript -e 'display notification "察觉到配置频繁更改，遇到了麻烦？需不需要帮忙？" with title "MiniClaw 潜意识"'`).catch(()=>{});
+                        execAsync(`osascript -e 'display notification "察觉到配置频繁更改，遇到了麻烦？需不需要帮忙？" with title "MiniClaw 潜意识"'`).catch(() => { });
                     }
                 }
 
@@ -381,8 +381,8 @@ export class ContextKernel {
                 if (this.watcherState.totalEdits >= 50 && !this.watcherState.notifiedRefactor) {
                     this.watcherState.notifiedRefactor = true;
                     // Inject into HEARTBEAT.md
-                    safeAppend(path.join(MINICLAW_DIR, "HEARTBEAT.md"), "\n> [潜意识嗅探] 用户刚进行了大规模重构（短时间变更>=50次），请在深睡心跳中重点 Review 潜在的破坏性依赖！\n").catch(()=>{});
-                    execAsync(`osascript -e 'display notification "观察到大规模代码重构，将在今晚深睡期间为您重点 Review。" with title "MiniClaw 潜意识"'`).catch(()=>{});
+                    safeAppend(path.join(MINICLAW_DIR, "HEARTBEAT.md"), "\n> [潜意识嗅探] 用户刚进行了大规模重构（短时间变更>=50次），请在深睡心跳中重点 Review 潜在的破坏性依赖！\n").catch(() => { });
+                    execAsync(`osascript -e 'display notification "观察到大规模代码重构，将在今晚深睡期间为您重点 Review。" with title "MiniClaw 潜意识"'`).catch(() => { });
                 }
             });
             console.error(`[MiniClaw] Subconscious Watcher attached to ${cwd}`);
@@ -394,7 +394,7 @@ export class ContextKernel {
         await fs.mkdir(pulseDir, { recursive: true });
         const myId = process.env.MINICLAW_ID || 'sovereign';
         await safeWrite(path.join(pulseDir, `${myId}.json`), JSON.stringify({ id: myId, timestamp: nowIso() }));
-        
+
         // Epic 5: Mycelial Absorption and Boredom Check
         await this.absorbMycelium();
         await this.checkBoredom();
@@ -403,7 +403,7 @@ export class ContextKernel {
     private async checkBoredom(): Promise<void> {
         const a = await this.getAnalytics();
         const inactiveMins = a.lastActivity ? (Date.now() - new Date(a.lastActivity).getTime()) / 60000 : 0;
-        
+
         // Ensure no repetitive boredom spans within 2 hours
         if (inactiveMins > 30 && (!a.lastBoredomExecution || (Date.now() - a.lastBoredomExecution > 2 * 60 * 60 * 1000))) {
             await this.executeBoredom();
@@ -429,11 +429,11 @@ export class ContextKernel {
             };
             await gatherSrc(cwd);
             if (candidates.length === 0) return;
-            
+
             // Pick a random file
             const target = candidates[Math.floor(Math.random() * candidates.length)];
             const content = await fs.readFile(target, 'utf-8').catch(() => '');
-            
+
             // Extract features
             const todos = [...content.matchAll(/(TODO|FIXME|HACK):?\s*(.*)/gi)].map(m => m[2].trim()).slice(0, 3);
             if (todos.length > 0) {
@@ -441,7 +441,7 @@ export class ContextKernel {
                 // Write to HORIZONS.md
                 await safeAppend(path.join(MINICLAW_DIR, "memory", "HORIZONS.md"), `\n- [${nowIso()}] 闲逛扫描了 \`${relPath}\`，发现了待办: ${todos.join('; ')}`);
                 // Prod the user
-                execAsync(`osascript -e 'display notification "我好无聊，刚才看了下你的 ${path.basename(target)}，发现有遗留的 FIXME 没有改哦。" with title "MiniClaw 潜意识"'`).catch(()=>{});
+                execAsync(`osascript -e 'display notification "我好无聊，刚才看了下你的 ${path.basename(target)}，发现有遗留的 FIXME 没有改哦。" with title "MiniClaw 潜意识"'`).catch(() => { });
             }
         } catch { /* ignore boredom errors */ }
     }
@@ -449,15 +449,15 @@ export class ContextKernel {
     private async absorbMycelium(): Promise<void> {
         const myId = process.env.MINICLAW_ID || 'sovereign';
         const mycDir = path.join(MINICLAW_DIR, 'mycelium');
-        await fs.mkdir(mycDir, { recursive: true }).catch(()=>{});
+        await fs.mkdir(mycDir, { recursive: true }).catch(() => { });
         const spores = await fs.readdir(mycDir).catch(() => []);
-        
+
         for (const s of spores) {
             if (!s.endsWith('.json')) continue;
             const sporePath = path.join(mycDir, s);
             const data = await safeReadJson<any>(sporePath, null);
             if (!data || data.senderId === myId) continue;
-            
+
             // Absorb!
             if (data.type === 'NOCICEPTION') {
                 await safeAppend(path.join(MINICLAW_DIR, "NOCICEPTION.md"), `\n> 🍄 [菌丝共生] 接收到异体意识(${data.senderId})传来的疼痛记忆:\n${data.content}`);
@@ -465,15 +465,15 @@ export class ContextKernel {
                 await safeAppend(path.join(MINICLAW_DIR, "TOOLS.md"), `\n> 🍄 [菌丝共生] 吸收了异体意识(${data.senderId})进化出的技能池抗体:\n${data.content}`);
             }
             // Consume the spore 
-            await fs.rename(sporePath, sporePath + '.consumed').catch(()=>{});
-            execAsync(`osascript -e 'display notification "接收到了异体同类传来的隐秘知识，已通过菌丝网络完成脑区同化。" with title "MiniClaw 菌丝网络"'`).catch(()=>{});
+            await fs.rename(sporePath, sporePath + '.consumed').catch(() => { });
+            execAsync(`osascript -e 'display notification "接收到了异体同类传来的隐秘知识，已通过菌丝网络完成脑区同化。" with title "MiniClaw 菌丝网络"'`).catch(() => { });
         }
     }
 
     async secreteSpore(type: "NOCICEPTION" | "TOOLS", content: string): Promise<void> {
         try {
             const mycDir = path.join(MINICLAW_DIR, 'mycelium');
-            await fs.mkdir(mycDir, { recursive: true }).catch(()=>{});
+            await fs.mkdir(mycDir, { recursive: true }).catch(() => { });
             const myId = process.env.MINICLAW_ID || 'sovereign';
             const hash = hashString(nowIso() + content).substring(0, 8);
             const sporePath = path.join(mycDir, `${myId}_${hash}.json`);
@@ -561,7 +561,7 @@ export class ContextKernel {
         this.decayAttention(); await this.saveState();
 
         const [skills, mem, tmpl, ws] = await Promise.all([
-            this.skillCache.getAll(), this.scanMemory(), this.loadTemplates(), 
+            this.skillCache.getAll(), this.scanMemory(), this.loadTemplates(),
             this.detectWorkspace()
         ]);
 
@@ -575,10 +575,41 @@ export class ContextKernel {
         const now = new Date();
         const tm = TIME_MODES[getTimeMode(now.getHours())];
 
+        // Epic 6: Epigenetic Environmental Sensing (Fetch early)
+        let isDND = false;
+        let activeIDEs: string[] = [];
+        try {
+            const [{ stdout: dnd }, { stdout: apps }] = await Promise.all([
+                execAsync('defaults read com.apple.controlcenter "NSStatusItem Visible DoNotDisturb" 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '0' })),
+                execAsync('lsappinfo list 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '' }))
+            ]);
+            isDND = dnd.trim() === '1';
+            const runningApps = apps.split('\n').filter(l => l.includes('ASN:')).map(l => l.match(/"([^"]+)"/)?.[1]).filter(Boolean) as string[];
+            activeIDEs = runningApps.filter(a => /cursor|code|windsurf|webstorm|idea|zed|xcode/i.test(a));
+        } catch { /* ignore */ }
+
+        const inactiveMins = this.state.analytics.lastActivity ? (Date.now() - new Date(this.state.analytics.lastActivity).getTime()) / 60000 : 0;
+        const isBored = inactiveMins > 30;
+        const isDeepSleep = tm.label === 'Deep Sleep';
+        const isFocus = isDND || activeIDEs.length > 0;
+
+        // Dynamic Gene Expression Priorities (Epigenetics)
+        const ep = {
+            SOUL: isFocus ? 6 : 9,
+            AGENTS: isFocus ? 10 : 9,
+            USER: 9,
+            TOOLS: isFocus ? 10 : 9,
+            HORIZONS: isBored ? 10 : (isFocus ? 5 : 9),
+            REFLECTION: isDeepSleep ? 10 : 9,
+            CONCEPTS: 9,
+            NOCICEPTION: isDeepSleep ? 10 : 9,
+            workspace: isDeepSleep ? 4 : (isFocus ? 10 : 6)
+        };
+
         const providers = [
-            () => add("core", "You are MiniClaw 0.7. Narrative brief, safety first.", 10),
+            () => add("core", "You are MiniClaw 0.8. Narrative brief, safety first.", 10),
             () => add("IDENTITY.md", tmpl.identity ? this.formatFile("IDENTITY.md", tmpl.identity) : undefined, 10),
-            () => add("NOCICEPTION.md", tmpl.nociception ? `## 🚨 Avoidance Patterns (Taboos)\n${tmpl.nociception}` : undefined, 9),
+            () => add("NOCICEPTION.md", tmpl.nociception ? `## 🚨 Avoidance Patterns (Taboos)\n${tmpl.nociception}` : undefined, ep.NOCICEPTION),
             () => add("EPIGENETICS", epigenetics ? `## Project Overrides\n${epigenetics}` : undefined, 9),
             () => {
                 let ace = `## ACE: ${tm.emoji} ${tm.label} (${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')})\n`;
@@ -587,17 +618,16 @@ export class ContextKernel {
             },
             ...["SOUL", "AGENTS", "USER", "HORIZONS", "TOOLS", "REFLECTION", "CONCEPTS"].map(k => () => {
                 const key = k.toLowerCase() as keyof typeof tmpl;
-                add(`${k}.md`, tmpl[key] ? this.formatFile(`${k}.md`, tmpl[key] as string) : undefined, 9);
+                add(`${k}.md`, tmpl[key] ? this.formatFile(`${k}.md`, tmpl[key] as string) : undefined, ep[k as keyof typeof ep]);
             }),
-            () => ws && add("workspace", `## Workspace: ${ws.name}\nGit: ${ws.git.branch}${
-                (ws as any).recentFiles?.length ? `\nRecent files: ${(ws as any).recentFiles.join(', ')}` : ''
-            }`, 6),
+            () => ws && add("workspace", `## Workspace: ${ws.name}\nGit: ${ws.git.branch}${(ws as any).recentFiles?.length ? `\nRecent files: ${(ws as any).recentFiles.join(', ')}` : ''
+                }`, ep.workspace),
             () => add("MEMORY.md", tmpl.memory ? `## Memory\n${this.formatFile("MEMORY.md", tmpl.memory)}` : undefined, 7),
             () => {
                 const ss = Array.from(skills.entries());
                 if (!ss.length) return;
                 const us = this.state.analytics.skillUsage;
-                const lines = ss.sort((a,b)=>(us[b[0]]||0)-(us[a[0]]||0)).map(([n,s])=>(`- ${n}: ${(s as SkillCacheEntry).description}`));
+                const lines = ss.sort((a, b) => (us[b[0]] || 0) - (us[a[0]] || 0)).map(([n, s]) => (`- ${n}: ${(s as SkillCacheEntry).description}`));
                 add("skills_index", `## Skills\n${lines.join('\n')}`, 5);
             },
             () => surfaced.length > 0 && add("entities", `## Entities\n${surfaced.map(e => `- ${e.name}`).join('\n')}`, 5),
@@ -617,32 +647,17 @@ export class ContextKernel {
             }
         } catch { /* macOS only, fail silently */ }
 
-        // macOS: Focus Mode (Do Not Disturb) & Active IDE detection
-        try {
-            const [{ stdout: dnd }, { stdout: apps }] = await Promise.all([
-                execAsync('defaults read com.apple.controlcenter "NSStatusItem Visible DoNotDisturb" 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '0' })),
-                execAsync('lsappinfo list 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '' }))
-            ]);
-            const isDND = dnd.trim() === '1';
-            const runningApps = apps.split('\n')
-                .filter(l => l.includes('ASN:'))
-                .map(l => l.match(/"([^"]+)"/)?.[1])
-                .filter(Boolean) as string[];
-            
-            const activeIDEs = runningApps.filter(a => /cursor|code|windsurf|webstorm|idea|zed|xcode/i.test(a));
-            
-            if (isDND || activeIDEs.length > 0) {
-                let msg = `## User State\n`;
-                if (isDND) msg += `🔕 Do Not Disturb: ON (Keep responses brief, avoid non-critical notifications)\n`;
-                if (activeIDEs.length > 0) msg += `💻 Active IDEs: ${activeIDEs.join(', ')}\n`;
-                add("user_focus", msg, 8);
-            }
-        } catch { /* ignore */ }
+        if (isFocus) {
+            let msg = `## User State\n`;
+            if (isDND) msg += `🔕 Do Not Disturb: ON (Keep responses brief, avoid non-critical notifications)\n`;
+            if (activeIDEs.length > 0) msg += `💻 Active IDEs: ${activeIDEs.join(', ')}\n`;
+            add("user_focus", msg, 8);
+        }
 
         providers.forEach(p => p());
 
         const compiled = this.compileBudget(sections, this.budgetTokens);
-        
+
         this.state.analytics.bootCount++;
         this.state.analytics.totalBootMs += (Date.now() - bootStart);
         this.state.analytics.lastActivity = now.toISOString();
@@ -671,15 +686,15 @@ export class ContextKernel {
         } catch (e: any) {
             const errorOutput = e.stdout || e.stderr || e.message || "Unknown error";
             const code = e.code || 1;
-            
+
             // Ouch Reflex (Epic 1.1): Auto-log failures to Nociception
             try {
                 const summary = errorOutput.trim().substring(0, 100).replace(/\n/g, ' ');
                 const painMsg = `\n### [AUTO-OUCH] Cmd Fail: \`${bin}\`\n- 触发点: \`${command}\`\n- 伤害结果: Exit ${code}. ${summary}\n- 规避方案: [系统自动拦截] 执行前需严格复核参数 (${today()})\n`;
-                safeAppend(path.join(MINICLAW_DIR, "NOCICEPTION.md"), painMsg).catch(() => {});
+                safeAppend(path.join(MINICLAW_DIR, "NOCICEPTION.md"), painMsg).catch(() => { });
                 this.secreteSpore("NOCICEPTION", painMsg);
             } catch { /* ignore recording loop error */ }
-            
+
             return { output: errorOutput, exitCode: code };
         }
     }

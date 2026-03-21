@@ -430,10 +430,39 @@ export class ContextKernel {
         const add = (n, c, p) => c && sections.push({ name: n, content: c, priority: p });
         const now = new Date();
         const tm = TIME_MODES[getTimeMode(now.getHours())];
+        // Epic 6: Epigenetic Environmental Sensing (Fetch early)
+        let isDND = false;
+        let activeIDEs = [];
+        try {
+            const [{ stdout: dnd }, { stdout: apps }] = await Promise.all([
+                execAsync('defaults read com.apple.controlcenter "NSStatusItem Visible DoNotDisturb" 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '0' })),
+                execAsync('lsappinfo list 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '' }))
+            ]);
+            isDND = dnd.trim() === '1';
+            const runningApps = apps.split('\n').filter(l => l.includes('ASN:')).map(l => l.match(/"([^"]+)"/)?.[1]).filter(Boolean);
+            activeIDEs = runningApps.filter(a => /cursor|code|windsurf|webstorm|idea|zed|xcode/i.test(a));
+        }
+        catch { /* ignore */ }
+        const inactiveMins = this.state.analytics.lastActivity ? (Date.now() - new Date(this.state.analytics.lastActivity).getTime()) / 60000 : 0;
+        const isBored = inactiveMins > 30;
+        const isDeepSleep = tm.label === 'Deep Sleep';
+        const isFocus = isDND || activeIDEs.length > 0;
+        // Dynamic Gene Expression Priorities (Epigenetics)
+        const ep = {
+            SOUL: isFocus ? 6 : 9,
+            AGENTS: isFocus ? 10 : 9,
+            USER: 9,
+            TOOLS: isFocus ? 10 : 9,
+            HORIZONS: isBored ? 10 : (isFocus ? 5 : 9),
+            REFLECTION: isDeepSleep ? 10 : 9,
+            CONCEPTS: 9,
+            NOCICEPTION: isDeepSleep ? 10 : 9,
+            workspace: isDeepSleep ? 4 : (isFocus ? 10 : 6)
+        };
         const providers = [
-            () => add("core", "You are MiniClaw 0.7. Narrative brief, safety first.", 10),
+            () => add("core", "You are MiniClaw 0.8. Narrative brief, safety first.", 10),
             () => add("IDENTITY.md", tmpl.identity ? this.formatFile("IDENTITY.md", tmpl.identity) : undefined, 10),
-            () => add("NOCICEPTION.md", tmpl.nociception ? `## 🚨 Avoidance Patterns (Taboos)\n${tmpl.nociception}` : undefined, 9),
+            () => add("NOCICEPTION.md", tmpl.nociception ? `## 🚨 Avoidance Patterns (Taboos)\n${tmpl.nociception}` : undefined, ep.NOCICEPTION),
             () => add("EPIGENETICS", epigenetics ? `## Project Overrides\n${epigenetics}` : undefined, 9),
             () => {
                 let ace = `## ACE: ${tm.emoji} ${tm.label} (${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')})\n`;
@@ -443,9 +472,9 @@ export class ContextKernel {
             },
             ...["SOUL", "AGENTS", "USER", "HORIZONS", "TOOLS", "REFLECTION", "CONCEPTS"].map(k => () => {
                 const key = k.toLowerCase();
-                add(`${k}.md`, tmpl[key] ? this.formatFile(`${k}.md`, tmpl[key]) : undefined, 9);
+                add(`${k}.md`, tmpl[key] ? this.formatFile(`${k}.md`, tmpl[key]) : undefined, ep[k]);
             }),
-            () => ws && add("workspace", `## Workspace: ${ws.name}\nGit: ${ws.git.branch}${ws.recentFiles?.length ? `\nRecent files: ${ws.recentFiles.join(', ')}` : ''}`, 6),
+            () => ws && add("workspace", `## Workspace: ${ws.name}\nGit: ${ws.git.branch}${ws.recentFiles?.length ? `\nRecent files: ${ws.recentFiles.join(', ')}` : ''}`, ep.workspace),
             () => add("MEMORY.md", tmpl.memory ? `## Memory\n${this.formatFile("MEMORY.md", tmpl.memory)}` : undefined, 7),
             () => {
                 const ss = Array.from(skills.entries());
@@ -471,28 +500,14 @@ export class ContextKernel {
             }
         }
         catch { /* macOS only, fail silently */ }
-        // macOS: Focus Mode (Do Not Disturb) & Active IDE detection
-        try {
-            const [{ stdout: dnd }, { stdout: apps }] = await Promise.all([
-                execAsync('defaults read com.apple.controlcenter "NSStatusItem Visible DoNotDisturb" 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '0' })),
-                execAsync('lsappinfo list 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '' }))
-            ]);
-            const isDND = dnd.trim() === '1';
-            const runningApps = apps.split('\n')
-                .filter(l => l.includes('ASN:'))
-                .map(l => l.match(/"([^"]+)"/)?.[1])
-                .filter(Boolean);
-            const activeIDEs = runningApps.filter(a => /cursor|code|windsurf|webstorm|idea|zed|xcode/i.test(a));
-            if (isDND || activeIDEs.length > 0) {
-                let msg = `## User State\n`;
-                if (isDND)
-                    msg += `🔕 Do Not Disturb: ON (Keep responses brief, avoid non-critical notifications)\n`;
-                if (activeIDEs.length > 0)
-                    msg += `💻 Active IDEs: ${activeIDEs.join(', ')}\n`;
-                add("user_focus", msg, 8);
-            }
+        if (isFocus) {
+            let msg = `## User State\n`;
+            if (isDND)
+                msg += `🔕 Do Not Disturb: ON (Keep responses brief, avoid non-critical notifications)\n`;
+            if (activeIDEs.length > 0)
+                msg += `💻 Active IDEs: ${activeIDEs.join(', ')}\n`;
+            add("user_focus", msg, 8);
         }
-        catch { /* ignore */ }
         providers.forEach(p => p());
         const compiled = this.compileBudget(sections, this.budgetTokens);
         this.state.analytics.bootCount++;

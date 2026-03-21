@@ -1,6 +1,6 @@
 {
   "type": "ribosome",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "核糖体 - 读取DNA并合成蛋白质（工具）的分子机器",
   "instincts": {
     "miniclaw_update": {
