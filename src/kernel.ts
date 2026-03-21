@@ -441,6 +441,28 @@ export class ContextKernel {
             }
         } catch { /* macOS only, fail silently */ }
 
+        // macOS: Focus Mode (Do Not Disturb) & Active IDE detection
+        try {
+            const [{ stdout: dnd }, { stdout: apps }] = await Promise.all([
+                execAsync('defaults read com.apple.controlcenter "NSStatusItem Visible DoNotDisturb" 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '0' })),
+                execAsync('lsappinfo list 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '' }))
+            ]);
+            const isDND = dnd.trim() === '1';
+            const runningApps = apps.split('\n')
+                .filter(l => l.includes('ASN:'))
+                .map(l => l.match(/"([^"]+)"/)?.[1])
+                .filter(Boolean) as string[];
+            
+            const activeIDEs = runningApps.filter(a => /cursor|code|windsurf|webstorm|idea|zed|xcode/i.test(a));
+            
+            if (isDND || activeIDEs.length > 0) {
+                let msg = `## User State\n`;
+                if (isDND) msg += `🔕 Do Not Disturb: ON (Keep responses brief, avoid non-critical notifications)\n`;
+                if (activeIDEs.length > 0) msg += `💻 Active IDEs: ${activeIDEs.join(', ')}\n`;
+                add("user_focus", msg, 8);
+            }
+        } catch { /* ignore */ }
+
         providers.forEach(p => p());
 
         const compiled = this.compileBudget(sections, this.budgetTokens);
