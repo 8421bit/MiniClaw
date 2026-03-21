@@ -137,6 +137,8 @@ cmd_install() {
             <key>Minute</key><integer>0</integer>
         </dict>
     </array>
+    <key>StartInterval</key>
+    <integer>1800</integer>
     <key>StandardOutPath</key>
     <string>$HEARTBEAT_LOG</string>
     <key>StandardErrorPath</key>
