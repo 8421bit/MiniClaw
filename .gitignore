@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-docs/
 
 # Environment variables
 .env
@@ -12,17 +11,9 @@ yarn-debug.log*
 yarn-error.log*
 
 # System
-node_modules
 .qoder
 .claude
 .DS_Store
-Thumbs.db
-
-# User data (Local MiniClaw execution)
-# Note: In development, we might test with ~/.miniclaw, but if we test
-# inside the repo, we should ignore these:
-user_data/
-state.json
 
 # Explicitly allow dist/ for distribution
 !dist/
