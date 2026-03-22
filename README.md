@@ -186,9 +186,9 @@ MiniClaw 的 `templates/` 目录包含完整的数字生命基因组。每个文
 
 ---
 
-## 🛠️ 手动安装 (开发者模式)
+## 🛠️ 本地安装与守护进程 (Local Install & Daemon)
 
-如果你想贡献代码或修改源码：
+虽然你可以通过 `npx` 零安装使用 MiniClaw 作为普通的 MCP 插件，但如果你想解锁**真正的自主后台潜意识**（即使关闭了代码编辑器，MiniClaw 也能在深夜自动帮你复盘和整理记忆），你需要进行本地部署并安装守护进程 (仅限 macOS)。
 
 ```bash
 # 1. 克隆仓库
@@ -199,9 +199,20 @@ cd miniclaw
 npm install
 npm run build
 
-# 3. 注册 (自动脚本)
-./scripts/install.sh
+# 3. 自动配置与安装后台守护进程
+./scripts/install.sh cursor  # 将 cursor 替换为你的 IDE 名称，支持：claude-code, claude-desktop, cursor, windsurf
 ```
+
+### 详解 `scripts` 脚本功能
+
+- **`scripts/install.sh` (统一安装器)**
+  一次性脚本。它会自动为你指定的 IDE（如 Cursor, Windsurf）修改 JSON 配置，将 MiniClaw 注册为 MCP Server。同时，它会自动调用 `heartbeat.sh install` 部署潜意识神经。
+- **`scripts/heartbeat.sh` (心跳守护进程)**
+  后台神经中枢。负责向 macOS `launchd` 注册定时任务，每逢 09:00, 14:00, 21:00 以及每隔 30 分钟在后台隐式唤醒 AI。
+  *独立使用说明*：
+  - `./scripts/heartbeat.sh install`：安装后台服务
+  - `./scripts/heartbeat.sh uninstall`：卸载后台服务
+  - `./scripts/heartbeat.sh status`：查看守护进程状态及最近日志
 
 ---
 

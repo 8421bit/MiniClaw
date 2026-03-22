@@ -173,22 +173,33 @@ The `templates/` directory contains the complete digital life genome. Each file 
 
 ---
 
-## 🛠️ Manual Installation (For Developers)
+## 🛠️ Local Installation & Background Daemon
 
-If you want to contribute or modify the source:
+While you can use MiniClaw as a normal MCP plugin via zero-install `npx`, if you want to unlock the **true subconscious background heartbeat** (allowing MiniClaw to autonomously review and distill memories during the night even when your editor is closed), you need to install it locally and set up the macOS LaunchAgent daemon.
 
 ```bash
-# 1. Clone
+# 1. Clone the repository
 git clone https://github.com/8421bit/miniclaw.git
 cd miniclaw
 
-# 2. Install & Build
+# 2. Install dependencies & build
 npm install
 npm run build
 
-# 3. Register (Automatic Script)
-./scripts/install.sh
+# 3. Configure your IDEs & install the background daemon
+./scripts/install.sh cursor  # Replace 'cursor' with your IDE. Supports: claude-code, claude-desktop, cursor, windsurf
 ```
+
+### Understanding the `scripts/` Directory
+
+- **`scripts/install.sh` (Universal Installer)**
+  A one-off setup script. It automatically modifies the JSON configuration for your specified IDEs (e.g., Cursor, Windsurf) to register MiniClaw as an MCP Server. It will also automatically invoke `heartbeat.sh install` at the end to deploy the subconscious nerves.
+- **`scripts/heartbeat.sh` (Heartbeat Daemon)**
+  The autonomic nervous system. It registers a macOS `launchd` periodic task that wakes up the AI implicitly in the background at 09:00, 14:00, 21:00, and every 30 minutes.
+  *Standalone usage*:
+  - `./scripts/heartbeat.sh install`: Install the background service
+  - `./scripts/heartbeat.sh uninstall`: Remove the background service
+  - `./scripts/heartbeat.sh status`: View daemon status and recent logs
 
 ---
 
