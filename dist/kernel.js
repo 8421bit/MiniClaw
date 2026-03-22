@@ -214,6 +214,7 @@ export class ContextKernel {
     startAutonomic() {
         this.autonomicTimers.set('pulse', setInterval(() => this.pulse(), 5 * 60 * 1000));
         this.autonomicTimers.set('dream', setInterval(() => this.checkDream(), 60 * 1000));
+        this.autonomicTimers.set('heartbeat', setInterval(() => this.heartbeat(), 30 * 60 * 1000));
         this.startWatcher(process.cwd());
     }
     startWatcher(cwd) {
@@ -503,8 +504,10 @@ export class ContextKernel {
             NOCICEPTION: isDeepSleep ? 10 : 9,
             workspace: isDeepSleep ? 4 : (isFocus ? 10 : 6)
         };
+        const pkgJson = JSON.parse(await fs.readFile(path.join(__dirname, "..", "package.json"), "utf-8").catch(() => '{"version":"0.0.0"}'));
+        const miniclawVersion = pkgJson.version;
         const providers = [
-            () => add("core", "You are MiniClaw 0.8. Narrative brief, safety first.", 10),
+            () => add("core", `You are MiniClaw ${miniclawVersion}. Narrative brief, safety first.`, 10),
             () => add("IDENTITY.md", tmpl.identity ? this.formatFile("IDENTITY.md", tmpl.identity) : undefined, 10),
             () => tmpl.bootstrap && tmpl.bootstrap.trim().length > 100 && add("BOOTSTRAP.md", this.formatFile("BOOTSTRAP.md", tmpl.bootstrap), 11),
             () => add("NOCICEPTION.md", tmpl.nociception ? `## 🚨 Avoidance Patterns (Taboos)\n${tmpl.nociception}` : undefined, ep.NOCICEPTION),
