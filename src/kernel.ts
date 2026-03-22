@@ -400,6 +400,51 @@ export class ContextKernel {
         await this.checkBoredom();
     }
 
+    /**
+     * The Master Heartbeat (Metabolism).
+     * Consolidates memory health check, sensory integration, and skill triggers.
+     */
+    async heartbeat(): Promise<void> {
+        try {
+            const hbStart = Date.now();
+            const hbState = await this.getHeartbeatState();
+            const todayStr = today();
+            const dailyLogPath = path.join(MINICLAW_DIR, "memory", `${todayStr}.md`);
+
+            // 1. Memory Health (Satiety Check)
+            try {
+                const stats = await fs.stat(dailyLogPath);
+                const evaluation = await this.evaluateDistillation(stats.size);
+                if (evaluation.shouldDistill && !hbState.needsDistill) {
+                    await this.updateHeartbeatState({
+                        needsDistill: true,
+                        dailyLogBytes: stats.size,
+                    });
+                    console.error(`[MiniClaw] Metabolism: Distillation needed (${evaluation.urgency}): ${evaluation.reason}`);
+                } else {
+                    await this.updateHeartbeatState({ dailyLogBytes: stats.size });
+                }
+            } catch (e) {
+                await this.updateHeartbeatState({ dailyLogBytes: 0 });
+            }
+
+            // 2. Sensory Integration (Environmental Awareness)
+            const now = new Date();
+            await this.updateHeartbeatState({ lastHeartbeat: now.toISOString() });
+
+            // 3. Autonomous Skill Reflexes (onHeartbeat)
+            try {
+                await this.runSkillHooks("onHeartbeat");
+            } catch (e) {
+                console.error(`[MiniClaw] Reflex Error: ${e}`);
+            }
+
+            console.error(`[MiniClaw] Heartbeat completed in ${Date.now() - hbStart}ms.`);
+        } catch (err) {
+            console.error(`[MiniClaw] Metabolic failure: ${err}`);
+        }
+    }
+
     private async checkBoredom(): Promise<void> {
         const a = await this.getAnalytics();
         const inactiveMins = a.lastActivity ? (Date.now() - new Date(a.lastActivity).getTime()) / 60000 : 0;

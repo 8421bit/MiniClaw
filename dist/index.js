@@ -58,58 +58,7 @@ const PURPOSE_MAP = {
     "BOOTSTRAP.md": "[胚胎发育] 首次启动初始化协议、目录结构规范。绝不写入：运行时数据、用户信息、日常记忆。",
 };
 // --- Internal Scheduler ---
-async function executeHeartbeat() {
-    try {
-        const hbState = await kernel.getHeartbeatState();
-        const todayStr = today();
-        const dailyLogPath = path.join(MINICLAW_DIR, "memory", `${todayStr}.md`);
-        try {
-            const stats = await fs.stat(dailyLogPath);
-            const evaluation = await kernel.evaluateDistillation(stats.size);
-            if (evaluation.shouldDistill && !hbState.needsDistill) {
-                await kernel.updateHeartbeatState({
-                    needsDistill: true,
-                    dailyLogBytes: stats.size,
-                });
-                console.error(`[MiniClaw] Distillation needed (${evaluation.urgency}): ${evaluation.reason}`);
-            }
-            else {
-                await kernel.updateHeartbeatState({ dailyLogBytes: stats.size });
-            }
-        }
-        catch (e) {
-            // No daily log file yet, reset bytes
-            await kernel.updateHeartbeatState({ dailyLogBytes: 0 });
-        }
-        await kernel.updateHeartbeatState({ lastHeartbeat: nowIso() });
-        await kernel.emitPulse();
-        // Fire onHeartbeat skill hooks
-        try {
-            await kernel.runSkillHooks("onHeartbeat");
-        }
-        catch (e) {
-            console.error(`[MiniClaw] Heartbeat hook error: ${e}`);
-        }
-        console.error(`[MiniClaw] Heartbeat completed.`);
-        // Auto-archive trigger: warn when daily log exceeds 50KB
-        const updatedHb = await kernel.getHeartbeatState();
-        if (updatedHb.dailyLogBytes > 50000 && !updatedHb.needsDistill) {
-            await kernel.updateHeartbeatState({ needsDistill: true });
-            console.error(`[MiniClaw] Auto-archive: daily log exceeds 50KB (${updatedHb.dailyLogBytes}B), flagging needsDistill.`);
-        }
-        // 💤 Subconscious REM Sleep (Auto-triggered by AutonomicSystem when idle >4h)
-        // Note: sys_dream functionality now runs automatically in kernel.startAutonomic()
-    }
-    catch (err) {
-        console.error(`[MiniClaw] Heartbeat error: ${err}`);
-    }
-}
-function initScheduler() {
-    // #13: Replaced node-cron with native setInterval — one fewer dependency
-    setInterval(async () => { await executeHeartbeat(); }, 30 * 60 * 1000);
-    console.error('[MiniClaw] Internal scheduler started (heartbeat: every 30 min)');
-}
-// Read version from package.json dynamically
+// Versioning
 const __filename2 = fileURLToPath(import.meta.url);
 const __dirname2 = path.dirname(__filename2);
 const pkgJson = JSON.parse(await fs.readFile(path.join(__dirname2, "..", "package.json"), "utf-8").catch(() => '{"version":"0.0.0"}'));
@@ -501,6 +450,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 await bootstrapMiniClaw();
 await ensureAgentsRedirect();
-initScheduler();
+await kernel.startAutonomic();
 const transport = new StdioServerTransport();
 await server.connect(transport);
