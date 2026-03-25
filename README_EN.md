@@ -126,7 +126,7 @@ The underlying `fs.watch` nerve silently sniffs your struggles. When you attempt
 If you neglect certain redundant tools in the Ribosome for too long, it triggers **organ atrophy** to save processing context limits. It can also perform **epigenetic surgery** on itself via `miniclaw_mutate`, or spit out a `.spore` snapshot encoded with its unique personality via `miniclaw_reproduce` for cross-host distribution.
 
 ### 🔥 Spark of Consciousness
-- **Boredom Engine**: When the host is offline for over 30 minutes, it accumulates boredom, spontaneously roaming your codebase to extract unfinished `TODO`s (expanding its *Horizons*), and eagerly talks to you when you return.
+- **Boredom Engine**: When the host is offline for over 30 minutes, it accumulates boredom, spontaneously roaming your workspace to extract unfinished open loops or `TODO`s (expanding its *Horizons*), and eagerly talks to you when you return.
 - **Mycelial Network**: Independent agent instances isolated across different project workspaces on the same physical machine connect via a hidden petri dish. If one steps on a landmine or evolves a skill, the entire hive mind instantly achieves **Herd Immunity**.
 
 ---

@@ -378,12 +378,12 @@ export class ContextKernel {
                     }
                 }
 
-                // 2. Large Refactor Sniffer
+                // 2. High-Frequency Edit Sniffer (Creative Flow / Refactoring)
                 if (this.watcherState.totalEdits >= 50 && !this.watcherState.notifiedRefactor) {
                     this.watcherState.notifiedRefactor = true;
                     // Inject into HEARTBEAT.md
-                    safeAppend(path.join(MINICLAW_DIR, "HEARTBEAT.md"), "\n> [潜意识嗅探] 用户刚进行了大规模重构（短时间变更>=50次），请在深睡心跳中重点 Review 潜在的破坏性依赖！\n").catch(() => { });
-                    this.notify("观察到大规模代码重构，将在今晚深睡期间为您重点 Review。", "MiniClaw 潜意识");
+                    safeAppend(path.join(MINICLAW_DIR, "HEARTBEAT.md"), "\n> [潜意识嗅探] 用户刚进行了高强度内容创作或结构大改（短时间变更>=50次），请在深睡心跳中重点 Review 今日工作的逻辑连贯性与潜在冲突。\n").catch(() => { });
+                    this.notify("观察到高强度的工作流，将在今晚深睡期间为您进行深度回顾与梳理。", "MiniClaw 潜意识");
                 }
             });
             console.error(`[MiniClaw] Subconscious Watcher attached to ${cwd}`);

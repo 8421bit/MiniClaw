@@ -34,16 +34,16 @@ When awakened by `daemon.sh` during off-hours, perform these tasks silently:
 
 When running as a background pulse during active hours:
 
-- Monitor for stale TODO items in `HORIZONS.md` (>7 days without progress).
-- If the Subconscious Watcher flagged a large refactoring, review the affected files.
+- Monitor for stale TODOs or open tasks in `HORIZONS.md` (>7 days without progress).
+- If the Subconscious Watcher flagged high-frequency edits/restructuring, review the affected files.
 
 ## 📋 Custom Checks
 
 Add your own periodic check items below. The agent will execute these every ~30 minutes:
 
 <!-- Add bullet points below to activate heartbeat checks -->
-<!-- Example: - Check if `package.json` has any outdated dependencies -->
-<!-- Example: - Remind me to take a break if I've been coding for >2 hours -->
+<!-- Example: - Check if my drafts have grammar issues, or package.json has outdated dependencies -->
+<!-- Example: - Remind me to take a break if I've been working steadily for >2 hours -->
 
 ---
 
