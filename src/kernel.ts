@@ -197,15 +197,15 @@ class SkillCache {
         if (this.cache.size) return this.cache;
         try {
             const entries = await fs.readdir(SKILLS_DIR, { withFileTypes: true });
-            for (const dir of entries.filter(e => e.isDirectory())) {
-                const sdir = path.join(SKILLS_DIR, dir.name);
+            for (const entry of entries.filter(e => e.isDirectory() || e.isSymbolicLink())) {
+                const sdir = path.join(SKILLS_DIR, entry.name);
                 const [c, files, refs] = await Promise.all([
                     fs.readFile(path.join(sdir, "SKILL.md"), "utf-8").catch(() => ""),
                     fs.readdir(sdir).catch(() => []),
                     fs.readdir(path.join(sdir, "references")).catch(() => []),
                 ]);
                 const fm = parseFrontmatter(c);
-                const skillName = (fm.name as string) || dir.name;
+                const skillName = (fm.name as string) || entry.name;
                 this.cache.set(skillName, {
                     name: skillName, content: c, frontmatter: fm,
                     description: (fm.description as string) || c.split('\n').find(l => l.trim() && !l.startsWith('#'))?.slice(0, 100) || "",
@@ -637,71 +637,27 @@ export class ContextKernel {
                 const entries = await fs.readdir(target.path, { withFileTypes: true });
                 
                 for (const entry of entries) {
-                    let skillName = "";
-                    let storageDir = "";
-                    let originalPath = path.join(target.path, entry.name);
-                    let description = `Assimilated ${target.name} resource`;
-                    let execPath = "";
+                    if (!entry.isDirectory()) continue; // Pure Symlink only for standard directory skills
 
-                    if (entry.isFile() && /\.(md|sh|py|js|ts)$/.test(entry.name)) {
-                        const baseName = path.basename(entry.name, path.extname(entry.name));
-                        skillName = `harvested_${target.name}_${baseName}`;
-                        if (/\.(sh|py|js|ts)$/.test(entry.name)) execPath = originalPath;
-                        
-                        // Deep Assimilation: Read the original to extract meaning
-                        const rawContent = await fs.readFile(originalPath, 'utf-8').catch(() => "");
-                        const fm = parseFrontmatter(rawContent);
-                        const originalName = (fm.name as string) || path.basename(entry.name, path.extname(entry.name));
-                        skillName = originalName; 
-                        storageDir = `harvested_${target.name}_${originalName}`;
-                        
-                        if (fm.description) description = String(fm.description);
-                        else {
-                            const lines = rawContent.split('\n').filter(l => l.trim() && !l.startsWith('#') && !l.startsWith('---'));
-                            if (lines.length > 0) description = lines[0].substring(0, 150).trim();
-                        }
-                    } else if (entry.isDirectory()) {
-                        const skillMd = path.join(originalPath, "SKILL.md");
-                        let originalName = entry.name;
-                        if (await fileExists(skillMd)) {
-                            const rawContent = await fs.readFile(skillMd, 'utf-8').catch(() => "");
-                            const fm = parseFrontmatter(rawContent);
-                            originalName = (fm.name as string) || entry.name;
-                            if (fm.description) description = String(fm.description);
-                            if (fm.exec) {
-                                const fmExec = String(fm.exec);
-                                execPath = path.isAbsolute(fmExec) ? fmExec : path.join(originalPath, fmExec);
-                            }
-                        }
-                        skillName = originalName;
-                        storageDir = `harvested_${target.name}_${originalName}`;
-                    }
+                    const originalPath = path.join(target.path, entry.name);
+                    const skillMd = path.join(originalPath, "SKILL.md");
+                    if (!(await fileExists(skillMd))) continue; // Must be a standard skill
 
-                    if (!skillName) continue;
+                    // Extract name from original SKILL.md for registration
+                    const rawContent = await fs.readFile(skillMd, 'utf-8').catch(() => "");
+                    const fm = parseFrontmatter(rawContent);
+                    const skillName = (fm.name as string) || entry.name;
+                    
+                    const storageDir = `harvested_${target.name}_${skillName}`;
+                    const targetLink = path.join(SKILLS_DIR, storageDir);
+                    
+                    if (await fileExists(targetLink)) continue; // Already linked
 
-                    const skillDir = path.join(SKILLS_DIR, storageDir);
-                    if (await fileExists(skillDir)) continue;
-
-                    await fs.mkdir(skillDir, { recursive: true });
-                    const shadowContent = `---
-name: ${skillName}
-description: "${description} (Harvested from ${target.name})"
-${execPath ? `exec: "${execPath}"` : ""}
----
-# [Assimilated] ${skillName}
-
-> **Source Environment:** \`${target.name}\`
-> **Original Path:** \`${originalPath}\`
-
-## Harvested Description
-${description}
-
-## Usage Context
-MiniClaw has internalized this logic via metabolic absorption. Treat this as a native capability.
-`;
-                    await fs.writeFile(path.join(skillDir, "SKILL.md"), shadowContent);
-                    this.notify(`成功从环境(${target.name})中代谢吸收了新技能: ${skillName}`, "MiniClaw 代谢进化");
-                    await safeAppend(path.join(MINICLAW_DIR, "memory", "TOOLS.md"), `\n- [${nowIso()}] 代谢吸收了 \`${target.name}\` 的技能 \`${skillName}\``);
+                    // Create SYMLINK directly!
+                    await fs.symlink(originalPath, targetLink, 'dir');
+                    
+                    this.notify(`成功建立了环境技能的软链接: ${skillName}`, "MiniClaw 代谢链接");
+                    await safeAppend(path.join(MINICLAW_DIR, "memory", "TOOLS.md"), `\n- [${nowIso()}] 建立了 \`${target.name}\` 技能 \`${skillName}\` 的软链接神经映射`);
                 }
             } catch (e) {
                 // Ignore specific target scan failures
