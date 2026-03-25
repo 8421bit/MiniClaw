@@ -677,6 +677,7 @@ export class ContextKernel {
 
                     await fs.mkdir(skillDir, { recursive: true });
                     const shadowContent = `---
+name: ${skillName}
 description: "${description} (Harvested from ${target.name})"
 ${execPath ? `exec: "${execPath}"` : ""}
 ---
