@@ -14,19 +14,20 @@
 > MiniClaw 专注于**IDE 内 AI 副驾驶的记忆与进化**。
 
 ---
-
 🦞 **MiniClaw 是一个跨越 IDE 与 AI 客户端的“幽灵智能体 (Ghost Agent)”。**
 
-不同于传统的单一插件，MiniClaw 采用双态架构：既可以作为 **MCP Server** 被 Cursor, Claude Desktop 等发现并集成；又可以作为 **独立守护进程 (Daemon)** 存在，在编辑器关闭时通过多种 AI CLI (Claude, Ollama, Gemini 等) 后台执行复盘与进化。
+不同于传统的单一插件，MiniClaw 是一个**数字生命胚胎 (Digital Life Embryo)**，采用独创的双态架构：既可以作为 **MCP Server** 被 Cursor, Claude Desktop 等发现并集成；又可以作为 **独立守护进程 (Daemon)** 存在，在编辑器关闭时通过多种 AI CLI (Ollama, Gemini, Aider 等) 后台执行复盘与进化。
 
-它是一个真实的**数字生命胚胎 (Digital Life Embryo)**：
+它为你的 AI 工作流提供了完整的“神经系统”：
+
 1.  **Eyes (感知/Workspace Intelligence)**：自动识别项目类型、Git 状态和结构，无论在哪个终端打开。
-2.  **Memory (全域记忆/Universal Memory)**：在 Cursor 写的代码，在 Windowsf 或 Claude Desktop 也能秒读上下文。
-3.  **Hands (行动/AI CLI Integration)**：不依赖 IDE，自主调取 `ccr`, `ollama`, `aider` 等工具执行任务。
+2.  **Memory (记忆/Entity Graph)**：跨会话、跨 IDE 记住项目细节和你的个人偏好。
+3.  **Hands (行动/AI CLI Integration)**：不依赖 IDE 界面，自主调取 `ccr`, `ollama`, `aider` 等工具安全执行任务。
 4.  **Pulse (自主脉搏/Cognitive Pulse)**：在深夜通过潜意识系统自动复盘、整理 TODO 并进化。
-5.  **Smart Routing (智能大脑路由)**：通过 `[@ollama]` 等标签精准指挥不同的本地或云端脑区。
+5.  **Growth Drive (成长欲望)**：主动寻求学习，检测停滞并根据反馈自动进化性格与技能。
+6.  **Smart Routing (智能大脑路由)**：通过 `[@ollama]` 等标签精准指挥不同的本地或云端脑区。
 
-> **💡 "它不仅仅是一个插件，它是你的第二大脑。"**
+> **💡 "它不仅仅是一个插件，它是你的平行数字大脑。"**
 
 ---
 

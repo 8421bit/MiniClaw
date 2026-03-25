@@ -17,16 +17,18 @@
 
 🦞 **MiniClaw is a "Ghost Agent" that spans multiple IDEs and AI clients.**
 
-Unlike traditional standalone plugins, MiniClaw adopts a dual-state architecture: it functions both as an **MCP Server** (integrated into Cursor, Claude Desktop, etc.) and a standalone **Autonomous Daemon** that performs review and evolution via various AI CLIs (Claude, Ollama, Gemini, etc.) even when the editor is closed.
+Unlike traditional standalone plugins, MiniClaw is a **Digital Life Embryo** with a unique dual-state architecture: it functions both as an **MCP Server** (integrated into Cursor, Claude Desktop, etc.) and a standalone **Autonomous Daemon** that performs review and evolution via various AI CLIs (Ollama, Gemini, Aider, etc.) even when the editor is closed.
 
-It is a true **Digital Life Embryo**:
+It provides a complete "Nervous System" for your AI workflow:
+
 1.  **Eyes (Workspace Intelligence)**: Automatically senses project type, git status, and structures, regardless of which terminal it's opened in.
-2.  **Memory (Universal Memory)**: Code written in Cursor is instantly understood by Windsurf or Claude Desktop through shared context.
-3.  **Hands (AI CLI Integration)**: Independent of any IDE, it autonomously calls tools like `ccr`, `ollama`, or `aider` to execute tasks.
+2.  **Memory (Entity Graph)**: Remembers project details and your preferences across sessions and IDEs.
+3.  **Hands (AI CLI Integration)**: Independent of any IDE, it autonomously calls tools like `ccr`, `ollama`, or `aider` to execute tasks safely.
 4.  **Pulse (Cognitive Pulse)**: Awakening in the dead of night via the subconscious system to review code, extract TODOs, and evolve.
-5.  **Smart Routing**: Precisely commands different local or cloud "brains" using tags like `[@ollama]`.
+5.  **Growth Drive**: Actively seeks learning, detects stagnation, and automatically evolves its personality and skills.
+6.  **Smart Routing**: Precisely commands different local or cloud "brains" using tags like `[@ollama]`.
 
-> **💡 "It's not just a plugin. It's your second brain."**
+> **💡 "It's not just a plugin. It's your parallel digital brain."**
 
 ---
 
