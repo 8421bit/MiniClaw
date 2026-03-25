@@ -460,13 +460,31 @@ export class ContextKernel {
 
             const prompt = content.trim();
             const candidates = [
+                { name: "ollama", args: "run llama3" }, // High priority: Local & Free
                 { name: "ccr", args: "code" },
                 { name: "gemini", args: "-p" },
                 { name: "qodercli", args: "-p" },
                 { name: "opencode", args: "" },
                 { name: "codex", args: "" },
-                { name: "claude", args: "-p --output-format text" }
+                { name: "claude", args: "-p --output-format text" },
+                { name: "aider", args: "--message" },
+                { name: "fabric", args: "-p extract_wisdom" },
+                { name: "gh", args: "copilot explain" },
+                { name: "interpreter", args: "--brief -y" }
             ];
+
+            // --- Smart Routing ---
+            // If the prompt starts with [@name], move that candidate to the top
+            const routeMatch = prompt.match(/^\[@([\w-]+)\]/);
+            if (routeMatch) {
+                const targetName = routeMatch[1];
+                const idx = candidates.findIndex(c => c.name === targetName);
+                if (idx !== -1) {
+                    const [target] = candidates.splice(idx, 1);
+                    candidates.unshift(target);
+                    console.error(`[MiniClaw] Smart Routing: Prioritizing ${targetName} per prompt tag.`);
+                }
+            }
 
             let success = false;
             let lastError = "";
@@ -479,7 +497,9 @@ export class ContextKernel {
                     // 2. Attempt execution
                     console.error(`[MiniClaw] Cognitive Pulse: Attempting via ${cli.name}...`);
                     // Redirection < /dev/null must be at the very end
-                    const { stdout, stderr } = await execAsync(`${cli.name} ${cli.args} "${prompt.replace(/"/g, '\\"')}" < /dev/null`);
+                    // Clean the prompt if it has a routing tag
+                    const finalPrompt = prompt.replace(/^\[@[\w-]+\]\s*/, '');
+                    const { stdout, stderr } = await execAsync(`${cli.name} ${cli.args} "${finalPrompt.replace(/"/g, '\\"')}" < /dev/null`);
                     
                     // 3. Log success
                     const timestamp = `[${nowIso()}]`;
@@ -488,11 +508,10 @@ export class ContextKernel {
                     
                     this.notify("心跳执行完成，意志已同步到记忆。");
                     success = true;
-                    break; // Exit loop on first success
+                    break;
                 } catch (err: any) {
                     console.error(`[MiniClaw] CLI ${cli.name} failed or not found: ${err.message || String(err)}`);
                     lastError = err.message || String(err);
-                    // Continue to next candidate
                 }
             }
 
