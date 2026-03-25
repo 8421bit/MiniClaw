@@ -41,16 +41,43 @@ ok()   { echo -e "${GREEN}✓${NC} $1"; }
 warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 
 # =============================================================================
+# Core Resolution (Source Mode vs Global Mode)
+# =============================================================================
+resolve_daemon_path() {
+    if [ -f "$ROOT_DIR/package.json" ]; then
+        # Developer / Clone Mode
+        echo "Source mode detected. Building project..."
+        cd "$ROOT_DIR"
+        npm install > /dev/null 2>&1 || true
+        npm run build > /dev/null
+        DAEMON_JS_PATH="$ROOT_DIR/dist/daemon.js"
+        NODE_CWD="$ROOT_DIR"
+    else
+        # Zero-Install / NPX Mode
+        echo "Standalone mode detected at $SCRIPT_DIR."
+        echo "Installing/Updating miniclaw globally..."
+        npm install -g github:8421bit/miniclaw > /dev/null
+        
+        GLOBAL_ROOT="$(npm root -g)"
+        DAEMON_JS_PATH="$GLOBAL_ROOT/miniclaw/dist/daemon.js"
+        NODE_CWD="$GLOBAL_ROOT/miniclaw"
+        
+        if [ ! -f "$DAEMON_JS_PATH" ]; then
+            echo -e "${RED}Error: Failed to locate global miniclaw installation at $DAEMON_JS_PATH${NC}"
+            exit 1
+        fi
+    fi
+}
+
+# =============================================================================
 # macOS LaunchAgent Management
 # =============================================================================
 cmd_install() {
     echo "Installing MiniClaw Autonomous Daemon (LaunchAgent)..."
     mkdir -p "$LAUNCH_AGENTS_DIR" "$MINICLAW_LAUNCHD_DIR" "$LOG_DIR"
     
-    echo "Building project..."
-    cd "$ROOT_DIR"
-    npm run build > /dev/null
-    ok "Build complete"
+    resolve_daemon_path
+    ok "Resolved daemon path: $DAEMON_JS_PATH"
 
     cat > "$DAEMON_PLIST_FILE" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -63,10 +90,10 @@ cmd_install() {
     <key>ProgramArguments</key>
     <array>
         <string>$(which node)</string>
-        <string>$ROOT_DIR/dist/daemon.js</string>
+        <string>$DAEMON_JS_PATH</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>$ROOT_DIR</string>
+    <string>$NODE_CWD</string>
     <key>StandardOutPath</key>
     <string>$DAEMON_LOG</string>
     <key>StandardErrorPath</key>
@@ -105,9 +132,10 @@ cmd_uninstall() {
 cmd_start() {
     echo "Starting MiniClaw Daemon (nohup)..."
     mkdir -p "$LOG_DIR"
-    cd "$ROOT_DIR"
-    npm run build > /dev/null
-    nohup node dist/daemon.js >> "$DAEMON_LOG" 2>&1 &
+    resolve_daemon_path
+    
+    cd "$NODE_CWD"
+    nohup node "$DAEMON_JS_PATH" >> "$DAEMON_LOG" 2>&1 &
     echo $! > "$DAEMON_PID_FILE"
     ok "Daemon started (PID: $(cat "$DAEMON_PID_FILE"))"
 }
