@@ -463,6 +463,7 @@ export class ContextKernel {
                 { name: "ccr", args: "code" },
                 { name: "gemini", args: "-p" },
                 { name: "qodercli", args: "-p" },
+                { name: "opencode", args: "" },
                 { name: "claude", args: "-p --output-format text" }
             ];
 
