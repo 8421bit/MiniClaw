@@ -10,7 +10,7 @@ import { analyzePatterns, triggerEvolution as runEvolution } from "./evolution.j
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 // === Configuration & Constants ===
-const HOME_DIR = process.env.HOME || process.cwd();
+const HOME_DIR = os.homedir();
 export const MINICLAW_DIR = path.join(HOME_DIR, ".miniclaw");
 const SKILLS_DIR = path.join(MINICLAW_DIR, "skills");
 const MEMORY_DIR = path.join(MINICLAW_DIR, "memory");
@@ -642,6 +642,27 @@ export class ContextKernel {
         }
         catch (e) {
             console.error(`[MiniClaw] Activity Logging Failed: ${e}`);
+        }
+    }
+    /**
+     * Reads recent daily logs (last N days) for habit/pattern recognition.
+     */
+    async getRecentLogs(days = 3) {
+        try {
+            const dir = path.join(MINICLAW_DIR, "memory");
+            const files = (await fs.readdir(dir).catch(() => []))
+                .filter(f => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+                .sort()
+                .reverse()
+                .slice(0, days);
+            let combined = "";
+            for (const file of files) {
+                combined += `\n### Log: ${file}\n` + await safeRead(path.join(dir, file));
+            }
+            return combined || "No recent logs found.";
+        }
+        catch {
+            return "Failed to retrieve logs.";
         }
     }
     async boot(mode = { type: "full" }) {

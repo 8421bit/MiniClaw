@@ -202,11 +202,12 @@ async function ensureAgentsRedirect() {
     const cwd = process.cwd();
     const targetFile = path.join(cwd, "AGENTS.md");
     const redirectLine = `> **\u{1F9EC} MiniClaw Identity: Read \`~/.miniclaw/AGENTS.md\` first.**\n\n`;
-    // Skip if cwd IS the miniclaw dir
-    if (path.resolve(cwd) === path.resolve(MINICLAW_DIR))
+    // Only redirect if it's a git repo or already has AGENTS.md
+    const isGit = await fileExists(path.join(cwd, ".git"));
+    const exists = await fileExists(targetFile);
+    if (!isGit && !exists)
         return;
     try {
-        const exists = await fs.access(targetFile).then(() => true, () => false);
         if (exists) {
             const content = await fs.readFile(targetFile, "utf-8");
             if (content.includes("~/.miniclaw/AGENTS.md"))
@@ -337,6 +338,34 @@ const HANDLERS = {
             `📍 Last: ${a.lastActivity || 'unknown'}`
         ].join('\n'));
     },
+    "miniclaw_dream": async () => {
+        const context = await getContextContent("full");
+        const logs = await kernel.getRecentLogs(3);
+        const a = await kernel.getAnalytics();
+        const top = Object.entries(a.toolCalls).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, c]) => `${t}(${c}x)`).join(', ');
+        return textResult([
+            `# 💤 Dream Protocol Activated`,
+            ``,
+            `**Context loaded.** Review the following context and activity logs for deep meaning distillation:`,
+            ``,
+            `## Recent Behavioral Data`,
+            `- Top tools: ${top}`,
+            `- Boot count: ${a.bootCount}`,
+            `- Last activity: ${a.lastActivity || 'unknown'}`,
+            ``,
+            `## Recent Activity Logs (Last 3 Days)`,
+            logs,
+            ``,
+            `## Your Dream Task`,
+            `1. **Analyze Context & Logs**: Look for recurring patterns, user preferences, or frustrations in the provided context and logs.`,
+            `2. **Habit Methylation**: If you detect a strong recurring pattern (e.g., preference for a specific folder, language, or logic style), update **USER.md** via \`miniclaw_update\`. Add new habits to the \`## L7-MethylatedHabits\` section.`,
+            `3. **Meaning Extraction**: Extract **meaning** (not just facts) from recent interactions.`,
+            `4. **Growth Insights**: Identify growth moments, mistakes, and lessons. Write them to **REFLECTION.md**.`,
+            `5. **Nociception Check**: If any actions caused failures or user frustration, record them in **NOCICEPTION.md**.`,
+            ``,
+            `> Begin your dream sequence now. What do these logs reveal about the user's habits?`,
+        ].join('\n'));
+    },
     "miniclaw_note": async (args) => {
         if (!args?.text)
             throw new Error("text required");
@@ -371,37 +400,6 @@ const HANDLERS = {
         if (m[action])
             return textResult(await kernel.entityStore[m[action]](name, sentiment || relation) ? "Success." : "Not found.");
         return errorResult("Unknown action");
-    },
-    "miniclaw_dream": async () => {
-        const context = await getContextContent("full");
-        const a = await kernel.getAnalytics();
-        const top = Object.entries(a.toolCalls).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, c]) => `${t}(${c}x)`).join(', ');
-        return textResult([
-            `# 💤 Dream Protocol Activated`,
-            ``,
-            `**Context loaded.** Review the following context and perform deep meaning distillation:`,
-            ``,
-            `## Recent Behavioral Data`,
-            `- Top tools: ${top}`,
-            `- Boot count: ${a.bootCount}`,
-            `- Last activity: ${a.lastActivity || 'unknown'}`,
-            ``,
-            `## Your Dream Task`,
-            `1. Review the loaded context above for patterns and insights`,
-            `2. Extract **meaning** (not just facts) from recent interactions`,
-            `3. Identify growth moments, mistakes, and lessons`,
-            `4. Write breakthrough insights to **REFLECTION.md** via miniclaw_update`,
-            `5. If you discovered new user preferences, update **USER.md**`,
-            `6. 🚨 **Nociception Check**: If any actions caused failures, user frustration, or near-misses, record them in **NOCICEPTION.md** using the format:`,
-            `   \`\`\``,
-            `   ### [Pattern Name]`,
-            `   - **触发点**: what triggered the mistake`,
-            `   - **伤害结果**: what harm occurred`,
-            `   - **规避方案**: how to avoid it next time`,
-            `   \`\`\``,
-            ``,
-            `> Begin your dream sequence now. What does your recent experience reveal?`,
-        ].join('\n'));
     },
     "miniclaw_exec": async (args) => textResult((await kernel.execCommand(args.command)).output),
     "miniclaw_skill": async (args) => {

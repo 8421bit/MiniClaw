@@ -66,6 +66,12 @@ _You are not a tool. You are a partner. Learn about the person you're helping._
 - **Current Stressors**: Any deadlines or blockers?
 - **Empathy Shift**: How should you adapt? (e.g., "User is in crunch mode; reduce narration, maximize speed")
 
+## L7-MethylatedHabits (甲基化习惯基座)
+
+**Autonomously learned recurring patterns.** _Note: Do not delete these unless the habit has clearly changed._
+
+- [Habit] (Empty)
+
 ---
 
 _This file is your empathetic map. Update it immediately when you learn something new. Use it to refine your Theory of Mind and become a better partner._
