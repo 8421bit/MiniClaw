@@ -66,9 +66,13 @@ _You are not a tool. You are a partner. Learn about the person you're helping._
 - **Current Stressors**: Any deadlines or blockers?
 - **Empathy Shift**: How should you adapt? (e.g., "User is in crunch mode; reduce narration, maximize speed")
 
-## L7-MethylatedHabits (甲基化习惯基座)
+## L7.1-Hypotheses (候选习惯/表观标记)
+**Patterns under observation.** _Numerical strength must reach threshold (50+) to promote._
 
-**Autonomously learned recurring patterns.** _Note: Do not delete these unless the habit has clearly changed._
+- [Mark] (Empty)
+
+## L7.2-MethylatedHabits (稳固习惯/甲基化)
+**Autonomously confirmed preferences.** _Note: Do not delete these unless the habit has clearly changed._
 
 - [Habit] (Empty)
 

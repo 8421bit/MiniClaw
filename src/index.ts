@@ -481,6 +481,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     
     // Auto-record the activity to the daily hippocampal log
     kernel.logActivity(`Called tool: ${name}${args ? ` with args: ${JSON.stringify(args)}` : ''}`).catch(()=>{});
+    
+    // Epic 22: Epigenetic Methylation - Mark recurring patterns
+    if (args) {
+        if (args.TargetFile && typeof args.TargetFile === 'string') {
+            const folder = path.dirname(args.TargetFile);
+            if (folder !== "." && folder !== "/") {
+                kernel.markHabit(`Save to folder: ${folder}`).catch(()=>{});
+            }
+        }
+        if (args.content && typeof args.content === 'string' && /[\u4e00-\u9fa5]/.test(args.content)) {
+            kernel.markHabit("Use Chinese Content").catch(()=>{});
+        }
+    }
 
     const handler = HANDLERS[name];
     if (handler) return await handler(args);

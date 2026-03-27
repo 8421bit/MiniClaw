@@ -178,6 +178,12 @@ interface MiniClawState {
     previousHashes: ContentHashes;
     heartbeat: HeartbeatState;
     attentionWeights: Record<string, number>; // Hebbian weights for context sections
+    epigeneticMarks: Record<string, { 
+        count: number; 
+        lastSeen: string; 
+        strength: number; 
+        status: "hypothesis" | "methylated";
+    }>;
 }
 
 const DEFAULT_HEARTBEAT: HeartbeatState = {
@@ -186,6 +192,23 @@ const DEFAULT_HEARTBEAT: HeartbeatState = {
     needsDistill: false,
     dailyLogBytes: 0,
     needsSubconsciousReflex: false,
+};
+
+const DEFAULT_STATE: MiniClawState = {
+    analytics: {
+        toolCalls: {},
+        bootCount: 0,
+        totalBootMs: 0,
+        lastActivity: "",
+        skillUsage: {},
+        dailyDistillations: 0,
+        activeHours: new Array(24).fill(0),
+        fileChanges: {},
+    },
+    previousHashes: {},
+    heartbeat: { ...DEFAULT_HEARTBEAT },
+    attentionWeights: {},
+    epigeneticMarks: {},
 };
 
 // === Skill Cache (Solves N+1 problem) ===
@@ -318,17 +341,7 @@ export class ContextKernel {
     readonly entityStore = new EntityStore();
     private autonomicTimers = new Map<string, NodeJS.Timeout>();
 
-    private state: MiniClawState = {
-        analytics: {
-            toolCalls: {}, bootCount: 0,
-            totalBootMs: 0, lastActivity: "", skillUsage: {},
-            dailyDistillations: 0,
-            activeHours: new Array(24).fill(0), fileChanges: {},
-        },
-        previousHashes: {},
-        heartbeat: { ...DEFAULT_HEARTBEAT },
-        attentionWeights: {},
-    };
+    private state: MiniClawState = { ...DEFAULT_STATE };
     private stateLoaded = false;
     private budgetTokens: number;
     private charsPerToken: number;
@@ -823,6 +836,55 @@ export class ContextKernel {
         } catch {
             return "Failed to retrieve logs.";
         }
+    }
+
+    /**
+     * Numerically tracks a recurring behavioral pattern (Methylation).
+     */
+    public async markHabit(pattern: string, increment = 1, threshold = 5): Promise<void> {
+        await this.loadState();
+        if (!this.state.epigeneticMarks) this.state.epigeneticMarks = {};
+        
+        const mark = this.state.epigeneticMarks[pattern] || { count: 0, lastSeen: "", strength: 0, status: "hypothesis" };
+        mark.count += increment;
+        mark.lastSeen = nowIso();
+        mark.strength = Math.min(100, mark.strength + increment * 10);
+        
+        this.state.epigeneticMarks[pattern] = mark;
+        
+        // Trigger notification if habit reaches "Ready for Methylation" status
+        if (mark.count >= threshold && mark.status === "hypothesis") {
+            await this.sendNotification("🧬 DNA Evolution Candidate", `Detected recurring pattern: "${pattern}". Ready to methylate?`);
+        }
+        
+        await this.saveState();
+    }
+
+    /**
+     * Forgetting mechanism: Decays the strength of unused epigenetic marks.
+     */
+    public async decayMarks(): Promise<void> {
+        await this.loadState();
+        if (!this.state.epigeneticMarks) return;
+
+        for (const [key, mark] of Object.entries(this.state.epigeneticMarks)) {
+            const idleDays = daysSince(mark.lastSeen);
+            if (idleDays > 1) {
+                mark.strength = Math.max(0, mark.strength - idleDays * 5);
+                if (mark.strength === 0 && mark.status === "hypothesis") {
+                    delete this.state.epigeneticMarks[key];
+                }
+            }
+        }
+        await this.saveState();
+    }
+
+    /**
+     * OS-level proactive notification (macOS).
+     */
+    public async sendNotification(title: string, message: string): Promise<void> {
+        const cmd = `osascript -e 'display notification "${message}" with title "🦞 MiniClaw" subtitle "${title}"'`;
+        await execAsync(cmd).catch(() => {});
     }
 
     async boot(mode: ContextMode = { type: "full" }): Promise<string> {
