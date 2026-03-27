@@ -74,3 +74,11 @@ Record gotchas, best parameters, and lessons learned here. Examples:
 ```
 - [Tool Name]: {observation}. Fix: {solution}.
 ```
+
+## 🧠 技能候选 (Hypotheses / Epigenetic Marks)
+**Emerging techniques under observation.** _Threshold: 8 successes to promote._
+
+- [Mark] (Empty)
+
+## 🛠️ 稳固技能 (Methylated Tools)
+**Confirmed tool experience learned from interaction.**

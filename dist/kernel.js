@@ -672,20 +672,27 @@ export class ContextKernel {
         }
     }
     /**
-     * Numerically tracks a recurring behavioral pattern (Methylation).
+     * Numerically tracks a recurring behavioral pattern (Methylation) across all DNA types.
+     * @param type habit | pain | skill | soul
      */
-    async markHabit(pattern, increment = 1, threshold = 5) {
+    async markEpigenetic(type, key, increment = 1, thresholdMap) {
         await this.loadState();
         if (!this.state.epigeneticMarks)
             this.state.epigeneticMarks = {};
-        const mark = this.state.epigeneticMarks[pattern] || { count: 0, lastSeen: "", strength: 0, status: "hypothesis" };
+        const patternKey = `${type.toUpperCase()}:${key}`;
+        const mark = this.state.epigeneticMarks[patternKey] || { count: 0, lastSeen: "", strength: 0, status: "hypothesis" };
+        // Define default thresholds: Pain triggers faster (3), Skills need more proof (8)
+        const thresholds = thresholdMap || { habit: 5, pain: 3, skill: 8, soul: 5 };
+        const threshold = thresholds[type] || 5;
         mark.count += increment;
         mark.lastSeen = nowIso();
-        mark.strength = Math.min(100, mark.strength + increment * 10);
-        this.state.epigeneticMarks[pattern] = mark;
+        mark.strength = Math.min(100, mark.strength + increment * (100 / threshold));
+        this.state.epigeneticMarks[patternKey] = mark;
         // Trigger notification if habit reaches "Ready for Methylation" status
         if (mark.count >= threshold && mark.status === "hypothesis") {
-            await this.sendNotification("🧬 DNA Evolution Candidate", `Detected recurring pattern: "${pattern}". Ready to methylate?`);
+            const title = type === "pain" ? "⚠️ New Taboo Detected" :
+                type === "skill" ? "💡 New Best Practice" : "🧬 DNA Evolution Candidate";
+            await this.sendNotification(title, `Detected recurring pattern: "${key}". Commit to ${type.toUpperCase()}.md?`);
         }
         await this.saveState();
     }

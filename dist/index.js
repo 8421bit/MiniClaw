@@ -489,21 +489,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     await kernel.trackTool(name, Math.ceil(JSON.stringify(args || {}).length / 4) + 100);
     // Auto-record the activity to the daily hippocampal log
     kernel.logActivity(`Called tool: ${name}${args ? ` with args: ${JSON.stringify(args)}` : ''}`).catch(() => { });
-    // Epic 22: Epigenetic Methylation - Mark recurring patterns
+    // Epic 22 & 24: Omni-DNA Epigenetic Methylation
     if (args) {
         if (args.TargetFile && typeof args.TargetFile === 'string') {
             const folder = path.dirname(args.TargetFile);
             if (folder !== "." && folder !== "/") {
-                kernel.markHabit(`Save to folder: ${folder}`).catch(() => { });
+                kernel.markEpigenetic('habit', `Save to folder: ${folder}`).catch(() => { });
             }
         }
         if (args.content && typeof args.content === 'string' && /[\u4e00-\u9fa5]/.test(args.content)) {
-            kernel.markHabit("Use Chinese Content").catch(() => { });
+            kernel.markEpigenetic('habit', "Use Chinese Content").catch(() => { });
         }
     }
     const handler = HANDLERS[name];
-    if (handler)
-        return await handler(args);
+    if (handler) {
+        try {
+            const result = await handler(args);
+            // If it's a successful high-value command (like exec), mark it as a potential skill
+            if (name === "miniclaw_exec" && args && typeof args === 'object' && args.command) {
+                kernel.markEpigenetic('skill', `Successful Command: ${args.command}`).catch(() => { });
+            }
+            return result;
+        }
+        catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            // Epic 24: Capture failures as Pain (Nociception)
+            if (name === "miniclaw_exec" && args && typeof args === 'object' && args.command) {
+                kernel.markEpigenetic('pain', `Failed Command: ${args.command} (${errorMsg.substring(0, 30)})`, 1.5).catch(() => { });
+            }
+            else {
+                kernel.markEpigenetic('pain', `Tool Failure: ${name}`, 1).catch(() => { });
+            }
+            throw error;
+        }
+    }
     const skillTools = await kernel.discoverSkillTools();
     const skill = skillTools.find(t => t.toolName === name);
     if (skill) {
