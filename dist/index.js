@@ -150,10 +150,60 @@ function getTemplatesDir() {
     return path.join(projectRoot, "templates");
 }
 /**
+ * Non-destructively migrates structural updates from template DNA to live DNA.
+ */
+async function migrateMarkdownDNA(templatePath, livePath) {
+    if (!(await fileExists(templatePath)) || !(await fileExists(livePath)))
+        return;
+    try {
+        const tplRaw = await fs.readFile(templatePath, "utf-8");
+        const usrRaw = await fs.readFile(livePath, "utf-8");
+        const tplSections = parseMarkdownSections(tplRaw);
+        const usrSections = parseMarkdownSections(usrRaw);
+        let updatedContent = usrRaw;
+        let changed = false;
+        for (const [header, content] of tplSections) {
+            if (!usrSections.has(header)) {
+                updatedContent += `\n\n${content}`;
+                changed = true;
+                console.error(`[MiniClaw] DNA Splicer: Injected missing section "${header}" into ${path.basename(livePath)}`);
+            }
+        }
+        if (changed)
+            await fs.writeFile(livePath, updatedContent);
+    }
+    catch (e) {
+        console.error(`[MiniClaw] Failed to migrate DNA ${livePath}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+/**
+ * Parses Markdown into sections based on H2 headers.
+ */
+function parseMarkdownSections(content) {
+    const sections = new Map();
+    const lines = content.split("\n");
+    let currentHeader = "ROOT";
+    let currentContent = [];
+    for (const line of lines) {
+        if (line.startsWith("## ")) {
+            if (currentHeader)
+                sections.set(currentHeader, currentContent.join("\n").trim());
+            currentHeader = line.trim();
+            currentContent = [line];
+        }
+        else {
+            currentContent.push(line);
+        }
+    }
+    if (currentHeader)
+        sections.set(currentHeader, currentContent.join("\n").trim());
+    return sections;
+}
+/**
  * Bootstrap: called ONCE at server startup.
  * Creates ~/.miniclaw and copies templates if needed, using helpers for IO.
  */
-async function bootstrapMiniClaw() {
+export async function bootstrapMiniClaw() {
     const templatesDir = getTemplatesDir();
     const initialized = await isInitialized();
     if (!initialized) {
@@ -174,6 +224,11 @@ async function bootstrapMiniClaw() {
             }
         }
         await fs.cp(path.join(templatesDir, "skills"), path.join(MINICLAW_DIR, "skills"), { recursive: true, force: false }).catch(() => { });
+        // Epic 23: Non-destructive Markdown DNA migration
+        const mdFiles = (await fs.readdir(templatesDir)).filter(f => f.endsWith('.md'));
+        for (const file of mdFiles) {
+            await migrateMarkdownDNA(path.join(templatesDir, file), path.join(MINICLAW_DIR, file));
+        }
         // Epic 4: Auto-migrate missing instincts in RIBOSOME.json
         try {
             const tplRiboRaw = await fs.readFile(path.join(templatesDir, "RIBOSOME.json"), "utf8");
