@@ -7,6 +7,9 @@ read_when:
 
 # 🧬 AGENTS.md - Genome Control Center
 
+## 🧬 Evolution Protocol
+This file is authorized for autonomous evolution. Optimize workflows based on project-specific evidence.
+
 ## Genome Overview
 
 | Chromosome | File | Gene Type | Function | Boot Seq |

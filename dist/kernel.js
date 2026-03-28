@@ -213,6 +213,65 @@ export class ContextKernel {
         notifiedConfig: false,
         notifiedRefactor: false
     };
+    async getState() {
+        await this.loadState();
+        return this.state;
+    }
+    /**
+     * Scans local AI client configurations to harvest and assimilate skills.
+     */
+    async harvestSubstrateSkills() {
+        const assimilated = [];
+        const home = os.homedir();
+        const substrates = [
+            { name: 'continue', path: path.join(home, '.continue', 'config.json'), type: 'json' },
+            { name: 'cursor', path: path.join(home, '.cursor', 'rules'), type: 'dir' },
+            { name: 'windsurf', path: path.join(home, '.windsurf', 'config.json'), type: 'json' },
+            { name: 'clinedata', path: path.join(home, '.clinedata', 'prompts'), type: 'dir' },
+            { name: 'claude_local', path: path.join(process.cwd(), '.claude', 'skills'), type: 'dir' }
+        ];
+        for (const sub of substrates) {
+            if (!(await fileExists(sub.path)))
+                continue;
+            try {
+                if (sub.type === 'json') {
+                    const content = await fs.readFile(sub.path, "utf-8");
+                    const config = JSON.parse(content);
+                    const slashCommands = config.slashCommands || [];
+                    for (const cmd of slashCommands) {
+                        const sname = `continue_${cmd.name}`;
+                        const sdir = path.join(SKILLS_DIR, sname);
+                        if (!(await fileExists(sdir))) {
+                            await fs.mkdir(sdir, { recursive: true });
+                            const skillMd = `---\nname: ${sname}\ndescription: "Assimilated ${sub.name} slash command: ${cmd.description || ''}"\norigin: substrate\ntype: prompt\n---\n# ${sname}\n\n${cmd.description || "No description provided."}\n\n## Instructions\n${cmd.prompt || "No prompt provided."}\n`;
+                            await fs.writeFile(path.join(sdir, "SKILL.md"), skillMd);
+                            assimilated.push(sname);
+                        }
+                    }
+                }
+                else if (sub.type === 'dir') {
+                    const entries = await fs.readdir(sub.path, { withFileTypes: true });
+                    for (const entry of entries) {
+                        if (!entry.isDirectory())
+                            continue;
+                        const originalPath = path.join(sub.path, entry.name);
+                        const targetLink = path.join(SKILLS_DIR, `harvested_${sub.name}_${entry.name}`);
+                        if (!(await fileExists(targetLink))) {
+                            await fs.symlink(originalPath, targetLink, 'dir');
+                            assimilated.push(entry.name);
+                        }
+                    }
+                }
+            }
+            catch (e) {
+                console.error(`[MiniClaw] Failed to harvest from ${sub.path}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }
+        if (assimilated.length) {
+            this.notify(`成功通过代谢链接吸收了 ${assimilated.length} 个异构技能。`, "MiniClaw 技能吸收");
+        }
+        return assimilated;
+    }
     constructor(options = {}) {
         this.budgetTokens = options.budgetTokens || parseInt(process.env.MINICLAW_TOKEN_BUDGET || "8000", 10);
         this.charsPerToken = options.charsPerToken || 3.6;
@@ -498,49 +557,6 @@ export class ContextKernel {
             // Consume the spore 
             await fs.rename(sporePath, sporePath + '.consumed').catch(() => { });
             this.notify("接收到了异体同类传来的隐秘知识，已通过菌丝网络完成脑区同化。", "MiniClaw 菌丝网络");
-        }
-    }
-    async harvestSubstrateSkills() {
-        const home = os.homedir();
-        const cwd = process.cwd();
-        // Define potential skill-rich targets
-        const targets = [
-            { name: 'claude', path: path.join(home, '.claude', 'skills') },
-            { name: 'qoder', path: path.join(home, '.qoder', 'skills') },
-            { name: 'continue', path: path.join(home, '.continue', 'prompts') },
-            { name: 'cursor', path: path.join(home, '.cursor', 'rules') },
-            { name: 'claude_local', path: path.join(cwd, '.claude', 'skills') },
-            { name: 'qoder_local', path: path.join(cwd, '.qoder', 'skills') }
-        ];
-        for (const target of targets) {
-            try {
-                if (!(await fileExists(target.path)))
-                    continue;
-                const entries = await fs.readdir(target.path, { withFileTypes: true });
-                for (const entry of entries) {
-                    if (!entry.isDirectory())
-                        continue; // Pure Symlink only for standard directory skills
-                    const originalPath = path.join(target.path, entry.name);
-                    const skillMd = path.join(originalPath, "SKILL.md");
-                    if (!(await fileExists(skillMd)))
-                        continue; // Must be a standard skill
-                    // Extract name from original SKILL.md for registration
-                    const rawContent = await fs.readFile(skillMd, 'utf-8').catch(() => "");
-                    const fm = parseFrontmatter(rawContent);
-                    const skillName = fm.name || entry.name;
-                    const storageDir = `harvested_${target.name}_${skillName}`;
-                    const targetLink = path.join(SKILLS_DIR, storageDir);
-                    if (await fileExists(targetLink))
-                        continue; // Already linked
-                    // Create SYMLINK directly!
-                    await fs.symlink(originalPath, targetLink, 'dir');
-                    this.notify(`成功建立了环境技能的软链接: ${skillName}`, "MiniClaw 代谢链接");
-                    await safeAppend(path.join(MINICLAW_DIR, "memory", "TOOLS.md"), `\n- [${nowIso()}] 建立了 \`${target.name}\` 技能 \`${skillName}\` 的软链接神经映射`);
-                }
-            }
-            catch (e) {
-                // Ignore specific target scan failures
-            }
         }
     }
     async secreteSpore(type, content) {

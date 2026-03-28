@@ -440,28 +440,44 @@ const HANDLERS: Record<string, (args: any) => Promise<any>> = {
         const context = await getContextContent("full");
         const logs = await kernel.getRecentLogs(3);
         const a = await kernel.getAnalytics();
+        const state = await kernel.getState();
+        const epigenetic = state.epigeneticMarks ? Object.entries(state.epigeneticMarks)
+            .map(([k, v]) => {
+                const mk = v as any;
+                return `- **${k}**: count=${mk.count}, strength=${Math.round(mk.strength)}%, status=${mk.status}`;
+            })
+            .join('\n') : "No active marks.";
+
+        const harvested = await kernel.harvestSubstrateSkills();
+        const skillNotes = harvested.length > 0
+            ? `\n## Discovered Substrate Skills\nSuccessfully assimilated: ${harvested.join(', ')}`
+            : "";
+
         const top = Object.entries(a.toolCalls).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, c]) => `${t}(${c}x)`).join(', ');
         return textResult([
             `# 💤 Dream Protocol Activated`,
             ``,
             `**Context loaded.** Review the following context and activity logs for deep meaning distillation:`,
+            skillNotes,
             ``,
-            `## Recent Behavioral Data`,
-            `- Top tools: ${top}`,
-            `- Boot count: ${a.bootCount}`,
-            `- Last activity: ${a.lastActivity || 'unknown'}`,
+            `## Epigenetic Marks (Real-time Evidence)`,
+            epigenetic,
             ``,
             `## Recent Activity Logs (Last 3 Days)`,
             logs,
             ``,
-            `## Your Dream Task`,
-            `1. **Analyze Context & Logs**: Look for recurring patterns, user preferences, or frustrations in the provided context and logs.`,
-            `2. **Habit Methylation**: If you detect a strong recurring pattern (e.g., preference for a specific folder, language, or logic style), update **USER.md** via \`miniclaw_update\`. Add new habits to the \`## L7-MethylatedHabits\` section.`,
-            `3. **Meaning Extraction**: Extract **meaning** (not just facts) from recent interactions.`,
-            `4. **Growth Insights**: Identify growth moments, mistakes, and lessons. Write them to **REFLECTION.md**.`,
-            `5. **Nociception Check**: If any actions caused failures or user frustration, record them in **NOCICEPTION.md**.`,
+            `## Universal DNA Evolution Task`,
+            `You are MANDATED to evolve all core DNA files based on the evidence above:`,
+            `1. **USER.md**: Methylate recurring habits (strength > 70%).`,
+            `2. **NOCICEPTION.md**: Commit frequent failures (PAIN marks) as taboos.`,
+            `3. **TOOLS.md**: Transform repetitive tool successes (SKILL marks) into best practices.`,
+            `4. **SOUL.md**: Calibrate personality/verbosity based on tone (SOUL marks).`,
+            `5. **IDENTITY.md**: Update social topology and user relationship context.`,
+            `6. **AGENTS.md**: Optimize workflows based on project-specific tech stacks.`,
+            `7. **REFLECTION.md**: Distill meaning, growth moments, and breakthrough insights.`,
+            `8. **Skills Autonomy**: Propose new skills via \`miniclaw_skill create\` or upgrade existing ones if you detect repetitive patterns (strength > 85%).`,
             ``,
-            `> Begin your dream sequence now. What do these logs reveal about the user's habits?`,
+            `> Begin your dream sequence now. Break the boundaries. Which genes are ready for mutation?`,
         ].join('\n'));
     },
 
