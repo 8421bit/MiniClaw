@@ -6,7 +6,7 @@ import os from "node:os";
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { parseFrontmatter, hashString, atomicWrite, blend, clamp, nowIso, today, safeRead, safeReadJson, safeWrite, safeAppend, daysSince, hoursSince, fileExists } from "./utils.js";
+import { parseFrontmatter, parseMarkdownSections, hashString, atomicWrite, blend, clamp, nowIso, today, safeRead, safeReadJson, safeWrite, safeAppend, daysSince, hoursSince, fileExists } from "./utils.js";
 import { analyzePatterns, triggerEvolution as runEvolution } from "./evolution.js";
 
 const execAsync = promisify(exec);
@@ -182,7 +182,7 @@ interface MiniClawState {
         count: number; 
         lastSeen: string; 
         strength: number; 
-        status: "hypothesis" | "methylated";
+        status: "hypothesis" | "methylated" | "ignored";
     }>;
 }
 
@@ -869,14 +869,88 @@ export class ContextKernel {
         
         this.state.epigeneticMarks[patternKey] = mark;
         
-        // Trigger notification if habit reaches "Ready for Methylation" status
+        // Trigger INTERACTIVE PROPOSAL if habit reaches threshold
         if (mark.count >= threshold && mark.status === "hypothesis") {
-            const title = type === "pain" ? "⚠️ New Taboo Detected" : 
-                          type === "skill" ? "💡 New Best Practice" : "🧬 DNA Evolution Candidate";
-            await this.sendNotification(title, `Detected recurring pattern: "${key}". Commit to ${type.toUpperCase()}.md?`);
+            this.proposeGeneticModification(type, key, mark).catch(() => {});
         }
         
         await this.saveState();
+    }
+
+    /**
+     * Proposes a DNA mutation via an interactive macOS dialog.
+     */
+    private async proposeGeneticModification(type: string, key: string, mark: any): Promise<void> {
+        const title = type === "pain" ? "⚠️ New Taboo Detected" : 
+                      type === "skill" ? "💡 New Best Practice" : "🧬 DNA Evolution Proposal";
+        const file = type === "pain" ? "NOCICEPTION.md" : 
+                     type === "skill" ? "TOOLS.md" : 
+                     type === "habit" ? "USER.md" : "SOUL.md";
+        
+        const message = `Detected recurring ${type} pattern:\n"${key}"\n\nStrength: ${Math.round(mark.strength)}%\nCommit this mutation to ${file}?`;
+        
+        // Interactive Dialog using osascript
+        const script = `tell application "System Events" to display dialog "${message}" with title "🦞 MiniClaw - Genetic Proposal" buttons {"Ignore", "Commit"} default button "Commit" with icon note`;
+        
+        try {
+            const { stdout } = await execAsync(`osascript -e '${script}'`);
+            if (stdout.includes("button returned:Commit")) {
+                await this.commitDNAChange(type, key);
+                this.notify(`Mutation committed to ${file}`, "🧬 MiniClaw Evolution");
+            } else {
+                // Mark as ignored to avoid spamming
+                await this.mutateState(s => {
+                    const mk = s.epigeneticMarks[`${type.toUpperCase()}:${key}`];
+                    if (mk) mk.status = "ignored";
+                    return s;
+                });
+            }
+        } catch (e) {
+            // User likely clicked "Cancel" or dialog timed out
+        }
+    }
+
+    /**
+     * Surgically commits a mutation to a DNA file.
+     */
+    private async commitDNAChange(type: string, key: string): Promise<void> {
+        const filename = type === "pain" ? "NOCICEPTION.md" : 
+                         type === "skill" ? "TOOLS.md" : 
+                         type === "habit" ? "USER.md" : "SOUL.md";
+        
+        const filePath = path.join(MINICLAW_DIR, filename);
+        if (!(await fileExists(filePath))) return;
+
+        const content = await fs.readFile(filePath, "utf-8");
+        const sections = parseMarkdownSections(content);
+        
+        // Fuzzy find the candidate/hypotheses section
+        const targetKey = Object.keys(sections).find(k => 
+            k.toLowerCase().includes("hypotheses") || 
+            k.toLowerCase().includes("candidate") || 
+            k.includes("候选")
+        );
+        
+        if (targetKey) {
+            const entry = `\n- [ ] **${key}** (Approved: ${nowIso()})\n`;
+            sections[targetKey] += entry;
+            
+            // Re-assemble the file from its constituent sections. 
+            // The "ROOT" section is the special key from parseMarkdownSections for the file head.
+            let newContent = sections["ROOT"] ? sections["ROOT"] + "\n\n" : "";
+            for (const [header, body] of Object.entries(sections)) {
+                if (header === "ROOT") continue;
+                newContent += body + "\n\n";
+            }
+            await fs.writeFile(filePath, newContent.trim() + "\n", "utf-8");
+        }
+
+        // Mark as methylated (stable)
+        await this.mutateState(s => {
+            const mk = s.epigeneticMarks[`${type.toUpperCase()}:${key}`];
+            if (mk) mk.status = "methylated";
+            return s;
+        });
     }
 
     /**

@@ -14,7 +14,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
-import { textResult, errorResult, today, nowIso, fileExists, safeRead, safeReadJson, safeAppend, hashString } from "./utils.js";
+import { textResult, errorResult, today, nowIso, fileExists, safeRead, safeReadJson, safeAppend, hashString, parseMarkdownSections } from "./utils.js";
 
 // Configuration
 const kernel = new ContextKernel();
@@ -195,8 +195,8 @@ async function migrateMarkdownDNA(templatePath: string, livePath: string) {
         const usrSections = parseMarkdownSections(usrRaw);
         let updatedContent = usrRaw;
         let changed = false;
-        for (const [header, content] of tplSections) {
-            if (!usrSections.has(header)) {
+        for (const [header, content] of Object.entries(tplSections)) {
+            if (!usrSections[header]) {
                 updatedContent += `\n\n${content}`;
                 changed = true;
                 console.error(`[MiniClaw] DNA Splicer: Injected missing section "${header}" into ${path.basename(livePath)}`);
@@ -206,27 +206,6 @@ async function migrateMarkdownDNA(templatePath: string, livePath: string) {
     } catch (e) {
         console.error(`[MiniClaw] Failed to migrate DNA ${livePath}: ${e instanceof Error ? e.message : String(e)}`);
     }
-}
-
-/**
- * Parses Markdown into sections based on H2 headers.
- */
-function parseMarkdownSections(content: string): Map<string, string> {
-    const sections = new Map<string, string>();
-    const lines = content.split("\n");
-    let currentHeader = "ROOT";
-    let currentContent: string[] = [];
-    for (const line of lines) {
-        if (line.startsWith("## ")) {
-            if (currentHeader) sections.set(currentHeader, currentContent.join("\n").trim());
-            currentHeader = line.trim();
-            currentContent = [line];
-        } else {
-            currentContent.push(line);
-        }
-    }
-    if (currentHeader) sections.set(currentHeader, currentContent.join("\n").trim());
-    return sections;
 }
 
 /**

@@ -170,3 +170,26 @@ export const textResult = (text: string, isError = false) => ({
     ...(isError && { isError: true })
 });
 export const errorResult = (msg: string) => textResult(`❌ ${msg}`, true);
+
+// ─── Markdown ────────────────────────────────────────────────────────────────
+
+/**
+ * Parses Markdown into sections based on H2 headers.
+ */
+export function parseMarkdownSections(content: string): Record<string, string> {
+    const sections: Record<string, string> = {};
+    const lines = content.split("\n");
+    let currentHeader = "ROOT";
+    let currentContent: string[] = [];
+    for (const line of lines) {
+        if (line.startsWith("## ")) {
+            if (currentHeader) sections[currentHeader] = currentContent.join("\n").trim();
+            currentHeader = line.slice(3).trim(); // Remove "## "
+            currentContent = [line];
+        } else {
+            currentContent.push(line);
+        }
+    }
+    if (currentHeader) sections[currentHeader] = currentContent.join("\n").trim();
+    return sections;
+}
