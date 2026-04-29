@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { watch } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { exec, execFile } from "node:child_process";
+import { exec, execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter, parseMarkdownSections, hashString, atomicWrite, nowIso, today, safeRead, safeReadJson, safeWrite, safeAppend, daysSince, hoursSince, fileExists } from "./utils.js";
@@ -93,6 +93,71 @@ export async function executeResolvedSkillScript(skillDir, scriptPath, args = {}
     catch (e) {
         return `Skill execution failed: ${e.message}\nOutput: ${e.stdout || e.stderr}`;
     }
+}
+export function stripPulseRouteTag(prompt) {
+    return prompt.replace(/^\[@[\w-]+\]\s*/, '');
+}
+export function getCognitivePulseCandidates(prompt) {
+    const candidates = [
+        { name: "ollama", args: ["run", "llama3"], promptDelivery: "argument" }, // High priority: Local & Free
+        { name: "ccr", args: ["code"], promptDelivery: "stdin" },
+        { name: "gemini", args: ["-p"], promptDelivery: "argument" },
+        { name: "qodercli", args: ["-p"], promptDelivery: "argument" },
+        { name: "opencode", args: [], promptDelivery: "argument" },
+        { name: "codex", args: [], promptDelivery: "argument" },
+        { name: "claude", args: ["-p", "--output-format", "text"], promptDelivery: "argument" },
+        { name: "aider", args: ["--message"], promptDelivery: "argument" },
+        { name: "fabric", args: ["-p", "extract_wisdom"], promptDelivery: "argument" },
+        { name: "gh", args: ["copilot", "explain"], promptDelivery: "argument" },
+        { name: "interpreter", args: ["--brief", "-y"], promptDelivery: "argument" },
+    ];
+    const routeMatch = prompt.match(/^\[@([\w-]+)\]/);
+    if (!routeMatch)
+        return candidates;
+    const targetName = routeMatch[1];
+    const idx = candidates.findIndex(c => c.name === targetName);
+    if (idx === -1)
+        return candidates;
+    const [target] = candidates.splice(idx, 1);
+    candidates.unshift(target);
+    return candidates;
+}
+function executeProcess(command, args, stdin, env) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, {
+            cwd: process.cwd(),
+            env,
+            shell: false,
+            stdio: ["pipe", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf-8");
+        child.stderr.setEncoding("utf-8");
+        child.stdout.on("data", chunk => { stdout += chunk; });
+        child.stderr.on("data", chunk => { stderr += chunk; });
+        child.stdin.on("error", () => { });
+        child.on("error", reject);
+        child.on("close", (code, signal) => {
+            if (code === 0) {
+                resolve({ stdout, stderr });
+                return;
+            }
+            const detail = signal ? `signal ${signal}` : `exit code ${code}`;
+            const err = new Error(`Command failed (${detail}): ${command}`);
+            Object.assign(err, { stdout, stderr, code });
+            reject(err);
+        });
+        child.stdin.end(stdin);
+    });
+}
+export async function runCognitivePulseCandidate(candidate, prompt, env = process.env) {
+    const finalPrompt = stripPulseRouteTag(prompt);
+    const args = candidate.promptDelivery === "argument"
+        ? [...candidate.args, finalPrompt]
+        : candidate.args;
+    const stdin = candidate.promptDelivery === "stdin" ? finalPrompt : "";
+    return executeProcess(candidate.name, args, stdin, env);
 }
 // === Helper: Safe file stat with null handling ===
 async function safeStat(filePath) {
@@ -468,30 +533,10 @@ export class ContextKernel {
             if (!content || content.trim().length === 0)
                 return;
             const prompt = content.trim();
-            const candidates = [
-                { name: "ollama", args: "run llama3" }, // High priority: Local & Free
-                { name: "ccr", args: "code" },
-                { name: "gemini", args: "-p" },
-                { name: "qodercli", args: "-p" },
-                { name: "opencode", args: "" },
-                { name: "codex", args: "" },
-                { name: "claude", args: "-p --output-format text" },
-                { name: "aider", args: "--message" },
-                { name: "fabric", args: "-p extract_wisdom" },
-                { name: "gh", args: "copilot explain" },
-                { name: "interpreter", args: "--brief -y" }
-            ];
-            // --- Smart Routing ---
-            // If the prompt starts with [@name], move that candidate to the top
+            const candidates = getCognitivePulseCandidates(prompt);
             const routeMatch = prompt.match(/^\[@([\w-]+)\]/);
-            if (routeMatch) {
-                const targetName = routeMatch[1];
-                const idx = candidates.findIndex(c => c.name === targetName);
-                if (idx !== -1) {
-                    const [target] = candidates.splice(idx, 1);
-                    candidates.unshift(target);
-                    console.error(`[MiniClaw] Smart Routing: Prioritizing ${targetName} per prompt tag.`);
-                }
+            if (routeMatch && candidates[0]?.name === routeMatch[1]) {
+                console.error(`[MiniClaw] Smart Routing: Prioritizing ${routeMatch[1]} per prompt tag.`);
             }
             let success = false;
             let lastError = "";
@@ -500,19 +545,7 @@ export class ContextKernel {
                 try {
                     // 2. Attempt execution
                     console.error(`[MiniClaw] Cognitive Pulse: Attempting via ${cli.name}...`);
-                    const finalPrompt = prompt.replace(/^\[@[\w-]+\]\s*/, '');
-                    // Use echo piping to ensure prompt is delivered to stdin if needed
-                    // and use -n to avoid newline issues where appropriate.
-                    // ccr code often expects the prompt either as arg or stdin.
-                    let finalCmd = `${cli.name} ${cli.args} "${finalPrompt.replace(/"/g, '\\"')}"`;
-                    if (cli.name === 'ccr') {
-                        // For Claude Code Router, sometimes it prefers the prompt via pipe
-                        finalCmd = `echo "${finalPrompt.replace(/"/g, '\\"')}" | ccr code`;
-                    }
-                    else {
-                        finalCmd = `${finalCmd} < /dev/null`;
-                    }
-                    const { stdout, stderr } = await execAsync(finalCmd, { env });
+                    const { stdout, stderr } = await runCognitivePulseCandidate(cli, prompt, env);
                     // 3. Log success
                     await this.logActivity(`Cognitive Pulse Success via ${cli.name}`);
                     const timestamp = `[${nowIso()}]`;
