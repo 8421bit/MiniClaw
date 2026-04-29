@@ -112,6 +112,50 @@ export function resolveSkillScriptPath(
     return { skillDir, scriptPath };
 }
 
+export async function executeResolvedSkillScript(
+    skillDir: string,
+    scriptPath: string,
+    args: Record<string, unknown> = {}
+): Promise<string> {
+    let realSkillDir: string;
+    let realScriptPath: string;
+    try {
+        [realSkillDir, realScriptPath] = await Promise.all([
+            fs.realpath(skillDir),
+            fs.realpath(scriptPath),
+        ]);
+        if (!isPathInside(realSkillDir, realScriptPath)) {
+            return "Security violation: script path escapes skill directory";
+        }
+    } catch {
+        return `Error: Script '${path.basename(scriptPath)}' not found.`;
+    }
+
+    let executable = realScriptPath;
+    let execArgs: string[] = [];
+    if (realScriptPath.endsWith('.js')) {
+        executable = process.execPath;
+        execArgs = [realScriptPath];
+    } else {
+        // Try making it executable
+        try { await fs.chmod(realScriptPath, '755'); } catch (e) { console.error(`[MiniClaw] Failed to chmod script: ${e}`); }
+    }
+
+    // Pass arguments as a serialized JSON string to avoid shell escaping.
+    execArgs.push(JSON.stringify(args));
+
+    try {
+        const { stdout, stderr } = await execFileAsync(executable, execArgs, {
+            cwd: realSkillDir,
+            timeout: 30000,
+            maxBuffer: 1024 * 1024
+        });
+        return stdout || stderr;
+    } catch (e: any) {
+        return `Skill execution failed: ${e.message}\nOutput: ${e.stdout || e.stderr}`;
+    }
+}
+
 // === Content Hash State ===
 export interface ContentHashes {
     [sectionName: string]: string;
@@ -1176,46 +1220,7 @@ export class ContextKernel {
             return `Error: Script '${scriptFile}' not found.`;
         }
 
-        let realSkillDir: string;
-        let realScriptPath: string;
-        try {
-            [realSkillDir, realScriptPath] = await Promise.all([
-                fs.realpath(skillDir),
-                fs.realpath(scriptPath),
-            ]);
-            if (!isPathInside(realSkillDir, realScriptPath)) {
-                return "Security violation: script path escapes skill directory";
-            }
-        } catch {
-            return `Error: Script '${scriptFile}' not found.`;
-        }
-
-        // 2. Prepare execution
-        let executable = realScriptPath;
-        let execArgs: string[] = [];
-        if (realScriptPath.endsWith('.js')) {
-            executable = process.execPath;
-            execArgs = [realScriptPath];
-        } else {
-            // Try making it executable
-            try { await fs.chmod(realScriptPath, '755'); } catch (e) { console.error(`[MiniClaw] Failed to chmod script: ${e}`); }
-        }
-
-        // Pass arguments as a serialized JSON string to avoid shell escaping.
-        const argsStr = JSON.stringify(args);
-        execArgs.push(argsStr);
-
-        // 3. Execute
-        try {
-            const { stdout, stderr } = await execFileAsync(executable, execArgs, {
-                cwd: realSkillDir,
-                timeout: 30000,
-                maxBuffer: 1024 * 1024
-            });
-            return stdout || stderr;
-        } catch (e: any) {
-            return `Skill execution failed: ${e.message}\nOutput: ${e.stdout || e.stderr}`;
-        }
+        return executeResolvedSkillScript(skillDir, scriptPath, args);
     }
 
     // === SANDBOX VALIDATION ===
