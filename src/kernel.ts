@@ -3,13 +3,12 @@ import fs from "node:fs/promises";
 import { watch } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { exec, execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter, parseMarkdownSections, hashString, atomicWrite, blend, clamp, nowIso, today, safeRead, safeReadJson, safeWrite, safeAppend, daysSince, hoursSince, fileExists } from "./utils.js";
 import { analyzePatterns, triggerEvolution as runEvolution } from "./evolution.js";
 
-const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
 // === Configuration & Constants ===
@@ -112,10 +111,16 @@ export function resolveSkillScriptPath(
     return { skillDir, scriptPath };
 }
 
+interface SkillRunner {
+    executable: string;
+    args: string[];
+}
+
 export async function executeResolvedSkillScript(
     skillDir: string,
     scriptPath: string,
-    args: Record<string, unknown> = {}
+    args: Record<string, unknown> = {},
+    runner?: SkillRunner
 ): Promise<string> {
     let realSkillDir: string;
     let realScriptPath: string;
@@ -131,12 +136,12 @@ export async function executeResolvedSkillScript(
         return `Error: Script '${path.basename(scriptPath)}' not found.`;
     }
 
-    let executable = realScriptPath;
-    let execArgs: string[] = [];
-    if (realScriptPath.endsWith('.js')) {
+    let executable = runner?.executable || realScriptPath;
+    let execArgs: string[] = runner ? [realScriptPath, ...runner.args] : [];
+    if (!runner && realScriptPath.endsWith('.js')) {
         executable = process.execPath;
         execArgs = [realScriptPath];
-    } else {
+    } else if (!runner) {
         // Try making it executable
         try { await fs.chmod(realScriptPath, '755'); } catch (e) { console.error(`[MiniClaw] Failed to chmod script: ${e}`); }
     }
@@ -255,16 +260,6 @@ export interface BootDelta {
     newSections: string[];
 }
 
-// === Helper: Safe file stat with null handling ===
-async function safeStat(filePath: string): Promise<Date | null> {
-    try {
-        const stats = await fs.stat(filePath);
-        return stats.mtime;
-    } catch {
-        return null;
-    }
-}
-
 // === ACE: Time Modes ===
 type TimeMode = "active" | "evening" | "rest";
 
@@ -338,6 +333,7 @@ interface MiniClawState {
     analytics: Analytics;
     previousHashes: ContentHashes;
     heartbeat: HeartbeatState;
+    scheduledJobs: Record<string, string>;
     attentionWeights: Record<string, number>; // Hebbian weights for context sections
     epigeneticMarks: Record<string, { 
         count: number; 
@@ -355,22 +351,49 @@ const DEFAULT_HEARTBEAT: HeartbeatState = {
     needsSubconsciousReflex: false,
 };
 
-const DEFAULT_STATE: MiniClawState = {
-    analytics: {
-        toolCalls: {},
-        bootCount: 0,
-        totalBootMs: 0,
-        lastActivity: "",
-        skillUsage: {},
-        dailyDistillations: 0,
-        activeHours: new Array(24).fill(0),
-        fileChanges: {},
-    },
-    previousHashes: {},
-    heartbeat: { ...DEFAULT_HEARTBEAT },
-    attentionWeights: {},
-    epigeneticMarks: {},
-};
+interface ScheduledJob {
+    id: string;
+    name?: string;
+    enabled?: boolean;
+    schedule?: {
+        kind?: string;
+        expr?: string;
+        tz?: string;
+    };
+    payload?: {
+        kind?: string;
+        text?: string;
+    };
+}
+
+interface ZonedCronParts {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
+    dayOfWeek: number;
+}
+
+function createDefaultState(): MiniClawState {
+    return {
+        analytics: {
+            toolCalls: {},
+            bootCount: 0,
+            totalBootMs: 0,
+            lastActivity: "",
+            skillUsage: {},
+            dailyDistillations: 0,
+            activeHours: new Array(24).fill(0),
+            fileChanges: {},
+        },
+        previousHashes: {},
+        heartbeat: { ...DEFAULT_HEARTBEAT },
+        scheduledJobs: {},
+        attentionWeights: {},
+        epigeneticMarks: {},
+    };
+}
 
 // === Skill Cache (Solves N+1 problem) ===
 
@@ -490,6 +513,160 @@ function getTimeMode(hour: number): TimeMode {
     return "rest";
 }
 
+function parseZonedCronParts(date: Date, timeZone?: string): ZonedCronParts {
+    const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "numeric",
+        minute: "numeric",
+        weekday: "short",
+        hourCycle: "h23",
+    });
+    const parts = Object.fromEntries(formatter.formatToParts(date).map(p => [p.type, p.value]));
+    const dowMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+    return {
+        year: Number(parts.year),
+        month: Number(parts.month),
+        day: Number(parts.day),
+        hour: Number(parts.hour),
+        minute: Number(parts.minute),
+        dayOfWeek: dowMap[parts.weekday] ?? 0,
+    };
+}
+
+function cronFieldMatches(value: number, field: string, min: number, max: number): boolean {
+    return field.split(",").some(rawPart => {
+        const part = rawPart.trim();
+        if (!part) return false;
+
+        const [rangePart, stepPart] = part.split("/");
+        const step = stepPart ? Number(stepPart) : 1;
+        if (!Number.isInteger(step) || step < 1) return false;
+
+        let start = min;
+        let end = max;
+        if (rangePart !== "*") {
+            if (rangePart.includes("-")) {
+                const [rawStart, rawEnd] = rangePart.split("-");
+                start = Number(rawStart);
+                end = Number(rawEnd);
+            } else {
+                start = Number(rangePart);
+                end = Number(rangePart);
+            }
+        }
+
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) {
+            return false;
+        }
+
+        return value >= start && value <= end && (value - start) % step === 0;
+    });
+}
+
+function cronDayOfWeekMatches(value: number, field: string): boolean {
+    return field.split(",").some(rawPart => {
+        const part = rawPart.trim();
+        if (!part) return false;
+        if (part === "7") return value === 0;
+
+        const [rangePart] = part.split("/");
+        if (rangePart.includes("-")) {
+            const [, rawEnd] = rangePart.split("-");
+            if (rawEnd === "7") {
+                return cronFieldMatches(value === 0 ? 7 : value, part, 0, 7);
+            }
+        }
+        return cronFieldMatches(value, part, 0, 6);
+    });
+}
+
+export function cronExpressionMatches(expr: string, date = new Date(), timeZone?: string): boolean {
+    const fields = expr.trim().split(/\s+/);
+    if (fields.length !== 5) return false;
+
+    const parts = parseZonedCronParts(date, timeZone);
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = fields;
+    const minuteMatch = cronFieldMatches(parts.minute, minute, 0, 59);
+    const hourMatch = cronFieldMatches(parts.hour, hour, 0, 23);
+    const monthMatch = cronFieldMatches(parts.month, month, 1, 12);
+
+    const domAny = dayOfMonth === "*";
+    const dowAny = dayOfWeek === "*";
+    const domMatch = cronFieldMatches(parts.day, dayOfMonth, 1, 31);
+    const dowMatch = cronDayOfWeekMatches(parts.dayOfWeek, dayOfWeek);
+    const dayMatch = domAny && dowAny ? true : domAny ? dowMatch : dowAny ? domMatch : domMatch || dowMatch;
+
+    return minuteMatch && hourMatch && monthMatch && dayMatch;
+}
+
+export function cronSlotKey(expr: string, date = new Date(), timeZone?: string): string {
+    const parts = parseZonedCronParts(date, timeZone);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return `${expr}@${tz}:${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}`;
+}
+
+export function appleScriptLiteral(value: string): string {
+    return `"${value
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\r?\n/g, "\\n")}"`;
+}
+
+function parseCommandLine(command: string): string[] {
+    const tokens: string[] = [];
+    let current = "";
+    let quote: "'" | '"' | null = null;
+
+    for (let i = 0; i < command.length; i++) {
+        const ch = command[i];
+        if (quote) {
+            if (ch === quote) {
+                quote = null;
+            } else {
+                current += ch;
+            }
+            continue;
+        }
+
+        if (ch === "'" || ch === '"') {
+            quote = ch;
+            continue;
+        }
+        if (/\s/.test(ch)) {
+            if (current) {
+                tokens.push(current);
+                current = "";
+            }
+            continue;
+        }
+        current += ch;
+    }
+
+    if (quote) throw new Error("Security violation: unterminated quote");
+    if (current) tokens.push(current);
+    return tokens;
+}
+
+function referencesSensitivePath(tokens: string[]): boolean {
+    const sensitive = [
+        /^~\/\.ssh(?:\/|$)/,
+        /^~\/\.aws(?:\/|$)/,
+        /^~\/\.config\/gh(?:\/|$)/,
+        /^~\/\.npmrc$/,
+        /(?:^|\/)\.env(?:\.|$)/,
+        /(?:^|\/)id_(rsa|dsa|ecdsa|ed25519)(?:\.pub)?$/,
+        /^\/etc\/passwd$/,
+        /^\/etc\/shadow$/,
+    ];
+    return tokens.some(token => sensitive.some(pattern => pattern.test(token)));
+}
+
 // === The Kernel ===
 
 export interface ContextKernelOptions {
@@ -502,7 +679,7 @@ export class ContextKernel {
     readonly entityStore = new EntityStore();
     private autonomicTimers = new Map<string, NodeJS.Timeout>();
 
-    private state: MiniClawState = { ...DEFAULT_STATE };
+    private state: MiniClawState = createDefaultState();
     private stateLoaded = false;
     private budgetTokens: number;
     private charsPerToken: number;
@@ -548,7 +725,7 @@ export class ContextKernel {
                         if (!(await fileExists(sdir))) {
                             await fs.mkdir(sdir, { recursive: true });
                             const skillMd = `---\nname: ${sname}\ndescription: "Assimilated ${sub.name} slash command: ${cmd.description || ''}"\norigin: substrate\ntype: prompt\n---\n# ${sname}\n\n${cmd.description || "No description provided."}\n\n## Instructions\n${cmd.prompt || "No prompt provided."}\n`;
-                            await fs.writeFile(path.join(sdir, "SKILL.md"), skillMd);
+                            await atomicWrite(path.join(sdir, "SKILL.md"), skillMd);
                             assimilated.push(sname);
                         }
                     }
@@ -581,10 +758,20 @@ export class ContextKernel {
     }
 
     startAutonomic(): void {
+        if (this.autonomicTimers.size > 0) return;
         this.autonomicTimers.set('pulse', setInterval(() => this.pulse(), 5 * 60 * 1000));
         this.autonomicTimers.set('dream', setInterval(() => this.checkDream(), 60 * 1000));
+        this.autonomicTimers.set('scheduler', setInterval(() => this.runScheduledJobs().catch(e => {
+            console.error(`[MiniClaw] Scheduler Error: ${e instanceof Error ? e.message : String(e)}`);
+        }), 60 * 1000));
         this.autonomicTimers.set('heartbeat', setInterval(() => this.heartbeat(), 30 * 60 * 1000));
+        this.runScheduledJobs().catch(() => { });
         this.startWatcher(process.cwd());
+    }
+
+    stopAutonomic(): void {
+        for (const timer of this.autonomicTimers.values()) clearInterval(timer);
+        this.autonomicTimers.clear();
     }
 
     private startWatcher(cwd: string): void {
@@ -633,6 +820,42 @@ export class ContextKernel {
         await this.absorbMycelium();
         await this.harvestSubstrateSkills();
         await this.checkBoredom();
+    }
+
+    async runScheduledJobs(referenceDate = new Date()): Promise<string[]> {
+        await this.loadState();
+
+        const jobsPath = path.join(MINICLAW_DIR, "jobs.json");
+        const jobs = await safeReadJson<ScheduledJob[]>(jobsPath, []);
+        if (!Array.isArray(jobs) || jobs.length === 0) return [];
+
+        const fired: string[] = [];
+        for (const job of jobs) {
+            if (!job || job.enabled === false || !job.id) continue;
+            if (job.schedule?.kind !== "cron" || !job.schedule.expr) continue;
+            if (!cronExpressionMatches(job.schedule.expr, referenceDate, job.schedule.tz)) continue;
+
+            const slot = cronSlotKey(job.schedule.expr, referenceDate, job.schedule.tz);
+            if (this.state.scheduledJobs[job.id] === slot) continue;
+
+            const text = job.payload?.text?.trim();
+            if (!text) continue;
+
+            const name = job.name || job.id;
+            const heartbeatEntry = [
+                "",
+                `> [⏰ Scheduled Job: ${name} | ${nowIso()}]`,
+                text,
+                "",
+            ].join("\n");
+            await safeAppend(path.join(MINICLAW_DIR, "HEARTBEAT.md"), heartbeatEntry);
+            await this.logActivity(`Scheduled job fired: ${job.id} — ${text}`);
+            this.state.scheduledJobs[job.id] = slot;
+            fired.push(job.id);
+        }
+
+        if (fired.length > 0) await this.saveState();
+        return fired;
     }
 
     /**
@@ -762,18 +985,18 @@ export class ContextKernel {
      * Support 'alert' (modal) vs 'notification' (banner).
      */
     public notify(message: string, title: string = "MiniClaw", options: { alert?: boolean, sound?: string } = {}): void {
-        const soundCmd = options.sound ? ` sound name "${options.sound}"` : "";
+        const soundCmd = options.sound ? ` sound name ${appleScriptLiteral(options.sound)}` : "";
         let script = "";
         
         if (options.alert) {
             // Modal Alert - stays until clicked. Owned by System Events to avoid Script Editor focus.
-            script = `tell application "System Events" to display alert "${title}" message "${message}" buttons {"OK"} default button "OK"`;
+            script = `tell application "System Events" to display alert ${appleScriptLiteral(title)} message ${appleScriptLiteral(message)} buttons {"OK"} default button "OK"`;
         } else {
             // Banner Notification
-            script = `display notification "${message}" with title "${title}"${soundCmd}`;
+            script = `display notification ${appleScriptLiteral(message)} with title ${appleScriptLiteral(title)}${soundCmd}`;
         }
 
-        execAsync(`osascript -e '${script}'`).catch(() => { });
+        execFileAsync("osascript", ["-e", script]).catch(() => { });
     }
 
     private async checkBoredom(): Promise<void> {
@@ -815,7 +1038,7 @@ export class ContextKernel {
             if (todos.length > 0) {
                 const relPath = path.relative(cwd, target);
                 // Write to HORIZONS.md
-                await safeAppend(path.join(MINICLAW_DIR, "memory", "HORIZONS.md"), `\n- [${nowIso()}] 闲逛扫描了 \`${relPath}\`，发现了待办: ${todos.join('; ')}`);
+                await safeAppend(path.join(MINICLAW_DIR, "HORIZONS.md"), `\n- [${nowIso()}] 闲逛扫描了 \`${relPath}\`，发现了待办: ${todos.join('; ')}`);
                 // Prod the user
                 this.notify(`发现遗留的 FIXME: ${todos[0]}`, `MiniClaw 潜意识 · ${path.basename(target)}`);
             }
@@ -879,6 +1102,10 @@ export class ContextKernel {
             }
             if (data.previousHashes) this.state.previousHashes = data.previousHashes;
             if (data.heartbeat) this.state.heartbeat = { ...DEFAULT_HEARTBEAT, ...data.heartbeat };
+            if (data.scheduledJobs) this.state.scheduledJobs = data.scheduledJobs;
+            else migrated = true;
+            if (data.epigeneticMarks) this.state.epigeneticMarks = data.epigeneticMarks;
+            else migrated = true;
 
             if (data.attentionWeights) {
                 this.state.attentionWeights = data.attentionWeights;
@@ -1017,10 +1244,10 @@ export class ContextKernel {
         const message = `Detected recurring ${type} pattern:\n"${key}"\n\nStrength: ${Math.round(mark.strength)}%\nCommit this mutation to ${file}?`;
         
         // Interactive Dialog using osascript
-        const script = `tell application "System Events" to display dialog "${message}" with title "🦞 MiniClaw - Genetic Proposal" buttons {"Ignore", "Commit"} default button "Commit" with icon note`;
+        const script = `tell application "System Events" to display dialog ${appleScriptLiteral(message)} with title ${appleScriptLiteral("🦞 MiniClaw - Genetic Proposal")} buttons {"Ignore", "Commit"} default button "Commit" with icon note`;
         
         try {
-            const { stdout } = await execAsync(`osascript -e '${script}'`);
+            const { stdout } = await execFileAsync("osascript", ["-e", script]);
             if (stdout.includes("button returned:Commit")) {
                 await this.commitDNAChange(type, key);
                 this.notify(`Mutation committed to ${file}`, "🧬 MiniClaw Evolution");
@@ -1069,7 +1296,7 @@ export class ContextKernel {
                 if (header === "ROOT") continue;
                 newContent += body + "\n\n";
             }
-            await fs.writeFile(filePath, newContent.trim() + "\n", "utf-8");
+            await atomicWrite(filePath, newContent.trim() + "\n");
         }
 
         // Mark as methylated (stable)
@@ -1103,8 +1330,8 @@ export class ContextKernel {
      * OS-level proactive notification (macOS).
      */
     public async sendNotification(title: string, message: string): Promise<void> {
-        const cmd = `osascript -e 'display notification "${message}" with title "🦞 MiniClaw" subtitle "${title}"'`;
-        await execAsync(cmd).catch(() => {});
+        const script = `display notification ${appleScriptLiteral(message)} with title ${appleScriptLiteral("🦞 MiniClaw")} subtitle ${appleScriptLiteral(title)}`;
+        await execFileAsync("osascript", ["-e", script]).catch(() => {});
     }
 
     async boot(mode: ContextMode = { type: "full" }): Promise<string> {
@@ -1132,8 +1359,8 @@ export class ContextKernel {
         let activeIDEs: string[] = [];
         try {
             const [{ stdout: dnd }, { stdout: apps }] = await Promise.all([
-                execAsync('defaults read com.apple.controlcenter "NSStatusItem Visible DoNotDisturb" 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '0' })),
-                execAsync('lsappinfo list 2>/dev/null', { timeout: 500 }).catch(() => ({ stdout: '' }))
+                execFileAsync("defaults", ["read", "com.apple.controlcenter", "NSStatusItem Visible DoNotDisturb"], { timeout: 500 }).catch(() => ({ stdout: '0' })),
+                execFileAsync("lsappinfo", ["list"], { timeout: 500 }).catch(() => ({ stdout: '' }))
             ]);
             isDND = dnd.trim() === '1';
             const runningApps = apps.split('\n').filter(l => l.includes('ASN:')).map(l => l.match(/"([^"]+)"/)?.[1]).filter(Boolean) as string[];
@@ -1142,7 +1369,7 @@ export class ContextKernel {
 
         const inactiveMins = this.state.analytics.lastActivity ? (Date.now() - new Date(this.state.analytics.lastActivity).getTime()) / 60000 : 0;
         const isBored = inactiveMins > 30;
-        const isDeepSleep = tm.label === 'Deep Sleep';
+        const isDeepSleep = tm.label === 'Rest';
         const isFocus = isDND || activeIDEs.length > 0;
 
         // Dynamic Gene Expression Priorities (Epigenetics)
@@ -1193,7 +1420,7 @@ export class ContextKernel {
 
         // macOS: Battery awareness (non-blocking, best-effort)
         try {
-            const { stdout: battRaw } = await execAsync('pmset -g batt 2>/dev/null | head -2', { timeout: 1000 });
+            const { stdout: battRaw } = await execFileAsync("pmset", ["-g", "batt"], { timeout: 1000 });
             const pct = battRaw.match(/(\d+)%/)?.[1];
             const charging = battRaw.includes('AC Power') || battRaw.includes('charging');
             if (pct) {
@@ -1229,15 +1456,25 @@ export class ContextKernel {
     async execCommand(command: string): Promise<{ output: string; exitCode: number }> {
         const allowed = ['git', 'ls', 'cat', 'find', 'grep', 'npm', 'node', 'python', 'pip', 'cargo',
             'pbpaste', 'mdfind', 'open', 'pmset'];
-        const bin = path.basename(command.split(' ')[0]);
+        if (/[;|&`$(){}\\<>!\n\r]/.test(command) || command.includes('..')) {
+            throw new Error("Security violation");
+        }
+
+        const tokens = parseCommandLine(command);
+        if (tokens.length === 0) throw new Error("Security violation");
+
+        const [executable, ...args] = tokens;
+        const bin = path.basename(executable);
         // Block destructive meta-chars; 'open' only allowed without -W (blocking) flag for safety
         const isOpen = bin === 'open';
-        if (!allowed.includes(bin) || /[;|&`$(){}\\<>!]/.test(command) || command.includes('..') ||
-            (isOpen && /(-W|-a\s+\/System|-R\s+\/System)/.test(command)))
+        const inlineCode = (bin === "node" && args.some(a => a === "-e" || a === "--eval")) ||
+            (bin === "python" && args.some(a => a === "-c"));
+        if (!allowed.includes(bin) || referencesSensitivePath(tokens) || inlineCode ||
+            (isOpen && args.some((a, i) => a === "-W" || (a === "-a" && args[i + 1]?.startsWith("/System")) || (a === "-R" && args[i + 1]?.startsWith("/System")))))
             throw new Error("Security violation");
 
         try {
-            const { stdout, stderr } = await execAsync(command, { cwd: process.cwd(), timeout: 10000 });
+            const { stdout, stderr } = await execFileAsync(executable, args, { cwd: process.cwd(), timeout: 10000 });
             return { output: stdout || stderr, exitCode: 0 };
         } catch (e: any) {
             const errorOutput = e.stdout || e.stderr || e.message || "Unknown error";
@@ -1261,8 +1498,18 @@ export class ContextKernel {
     async executeSkillScript(skillName: string, scriptFile: string, args: Record<string, unknown> = {}): Promise<string> {
         let skillDir: string;
         let scriptPath: string;
+        let runner: SkillRunner | undefined;
         try {
-            ({ skillDir, scriptPath } = resolveSkillScriptPath(skillName, scriptFile));
+            const execTokens = parseCommandLine(scriptFile);
+            const runnerBins = new Set(["node", "python", "python3", "bash", "sh"]);
+            if (execTokens.length > 1 && runnerBins.has(path.basename(execTokens[0]))) {
+                runner = { executable: execTokens[0], args: execTokens.slice(2) };
+                ({ skillDir, scriptPath } = resolveSkillScriptPath(skillName, execTokens[1]));
+            } else if (execTokens.length === 1) {
+                ({ skillDir, scriptPath } = resolveSkillScriptPath(skillName, execTokens[0]));
+            } else {
+                return "Security violation: invalid skill exec declaration";
+            }
         } catch (e) {
             return e instanceof Error ? e.message : "Security violation";
         }
@@ -1274,7 +1521,7 @@ export class ContextKernel {
             return `Error: Script '${scriptFile}' not found.`;
         }
 
-        return executeResolvedSkillScript(skillDir, scriptPath, args);
+        return executeResolvedSkillScript(skillDir, scriptPath, args, runner);
     }
 
     // === SANDBOX VALIDATION ===
@@ -1282,8 +1529,20 @@ export class ContextKernel {
         const skillDir = resolveSkillDirPath(skillName);
 
         try {
+            if (/[;|&`$(){}\\<>!\n\r]/.test(validationCmd) || validationCmd.includes('..')) {
+                throw new Error("Security violation");
+            }
+            const tokens = parseCommandLine(validationCmd);
+            if (tokens.length === 0) throw new Error("Security violation");
+            const [executable, ...args] = tokens;
+            const bin = path.basename(executable);
+            const allowedValidationBins = new Set(["node", "npm", "python", "python3", "bash", "sh"]);
+            if (!allowedValidationBins.has(bin) || referencesSensitivePath(tokens)) {
+                throw new Error("Security violation");
+            }
+
             // Run in a restricted environment with a strict timeout
-            const { stdout, stderr } = await execAsync(validationCmd, {
+            const { stdout, stderr } = await execFileAsync(executable, args, {
                 cwd: skillDir,
                 timeout: 2000, // 2 seconds P0 strict timeout for generated skills
                 env: { ...process.env, MINICLAW_SANDBOX: "1" }
@@ -1354,22 +1613,23 @@ export class ContextKernel {
 
         // 2. Git Detection
         try {
-            const { stdout: branch } = await execAsync('git branch --show-current', { cwd });
+            const { stdout: branch } = await execFileAsync('git', ['branch', '--show-current'], { cwd });
             info.git.isRepo = true;
             info.git.branch = branch.trim();
-            const { stdout: status } = await execAsync('git status --short', { cwd });
+            const { stdout: status } = await execFileAsync('git', ['status', '--short'], { cwd });
             info.git.status = status.trim() ? 'dirty' : 'clean';
-            const { stdout: log } = await execAsync('git log --oneline -3', { cwd });
+            const { stdout: log } = await execFileAsync('git', ['log', '--oneline', '-3'], { cwd });
             info.git.recentCommits = log.trim();
         } catch { /* not a git repo */ }
 
         // 3. Recent Files via mdfind (macOS Spotlight)
         try {
-            const { stdout: recentFiles } = await execAsync(
-                `mdfind -onlyin "${cwd}" "kMDItemFSContentChangeDate > $time.now(-3600)" 2>/dev/null | head -5`,
+            const { stdout: recentFiles } = await execFileAsync(
+                "mdfind",
+                ["-onlyin", cwd, "kMDItemFSContentChangeDate > $time.now(-3600)"],
                 { timeout: 2000 }
             );
-            const files = recentFiles.trim().split('\n').filter(Boolean).map(f => path.basename(f));
+            const files = recentFiles.trim().split('\n').filter(Boolean).slice(0, 5).map(f => path.basename(f));
             if (files.length > 0) (info as any).recentFiles = files;
         } catch { /* mdfind unavailable or no results */ }
 
@@ -1523,7 +1783,7 @@ export class ContextKernel {
 
     private senseRuntime(): RuntimeInfo {
         const gitBranch = (() => {
-            try { return require('child_process').execSync('git branch --show-current', { cwd: process.cwd(), stdio: 'pipe' }).toString().trim(); }
+            try { return execFileSync('git', ['branch', '--show-current'], { cwd: process.cwd(), stdio: 'pipe', encoding: 'utf-8' }).trim(); }
             catch { return ''; }
         })();
         return {
@@ -1751,7 +2011,7 @@ export class ContextKernel {
                 timestamp: new Date().toISOString(),
                 vitals: 'active'
             };
-            await fs.writeFile(pulseFile, JSON.stringify(pulseData, null, 2), 'utf-8');
+            await atomicWrite(pulseFile, JSON.stringify(pulseData, null, 2));
         } catch (e) {
             console.error(`💓 Pulse failed: ${(e as Error).message}`);
         }

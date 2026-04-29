@@ -3,6 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+    appleScriptLiteral,
+    cronExpressionMatches,
+    cronSlotKey,
     getCognitivePulseCandidates,
     runCognitivePulseCandidate,
     stripPulseRouteTag,
@@ -84,5 +87,28 @@ describe("Cognitive pulse command execution", () => {
         expect(await exists(marker)).toBe(false);
         expect(await readFile(argvFile, "utf-8")).toBe("code\n");
         expect(await readFile(stdinFile, "utf-8")).toBe(prompt);
+    });
+});
+
+describe("Scheduled job cron helpers", () => {
+    it("matches five-field cron expressions in the configured timezone", () => {
+        expect(cronExpressionMatches("0 9 * * *", new Date("2026-01-01T01:00:00Z"), "Asia/Shanghai")).toBe(true);
+        expect(cronExpressionMatches("0 9 * * *", new Date("2026-01-01T02:00:00Z"), "Asia/Shanghai")).toBe(false);
+    });
+
+    it("deduplicates scheduled jobs by cron minute slot", () => {
+        expect(cronSlotKey("0 9 * * *", new Date("2026-01-01T01:00:00Z"), "Asia/Shanghai"))
+            .toBe("0 9 * * *@Asia/Shanghai:2026-01-01T09:00");
+    });
+
+    it("treats day-of-week 7 as Sunday", () => {
+        expect(cronExpressionMatches("0 12 * * 7", new Date("2026-01-04T12:00:00Z"), "UTC")).toBe(true);
+    });
+});
+
+describe("AppleScript string literals", () => {
+    it("escapes shell-hostile content before passing it to osascript argv", () => {
+        expect(appleScriptLiteral('hello "there"\n$(touch /tmp/pwned)'))
+            .toBe('"hello \\"there\\"\\n$(touch /tmp/pwned)"');
     });
 });

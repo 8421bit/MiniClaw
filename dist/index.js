@@ -5,12 +5,13 @@ import { CallToolRequestSchema, ListResourcesRequestSchema, ListToolsRequestSche
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ContextKernel, MINICLAW_DIR, resolveSkillDirPath } from "./kernel.js";
-import { textResult, errorResult, today, nowIso, fileExists, safeRead, safeReadJson, safeAppend, hashString, parseMarkdownSections } from "./utils.js";
+import { textResult, errorResult, today, nowIso, fileExists, safeRead, safeReadJson, safeAppend, hashString, parseMarkdownSections, atomicWrite } from "./utils.js";
 // Configuration
 const kernel = new ContextKernel();
-// Start autonomic nervous system (pulse + dream)
-kernel.startAutonomic();
+const execFileAsync = promisify(execFile);
 // Ensure miniclaw dir exists
 const ensureDir = () => fs.mkdir(MINICLAW_DIR, { recursive: true }).catch(() => { });
 // Check if initialized
@@ -57,6 +58,21 @@ const PURPOSE_MAP = {
     "HEARTBEAT.md": "[脉搏系统] 后台自主行为指令、深睡期间潜意识任务。绝不写入：用户偏好、性格描述、长期事实。",
     "BOOTSTRAP.md": "[胚胎发育] 首次启动初始化协议、目录结构规范。绝不写入：运行时数据、用户信息、日常记忆。",
 };
+function resolveMiniClawMarkdownPath(filename) {
+    if (!filename || path.isAbsolute(filename) || filename.includes("\0")) {
+        throw new Error("Invalid filename");
+    }
+    if (!filename.endsWith(".md") || filename.includes("/") || filename.includes("\\")) {
+        throw new Error("Invalid filename");
+    }
+    const root = path.resolve(MINICLAW_DIR);
+    const target = path.resolve(root, filename);
+    const relative = path.relative(root, target);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error("Invalid filename");
+    }
+    return target;
+}
 // --- Internal Scheduler ---
 // Versioning
 const __filename2 = fileURLToPath(import.meta.url);
@@ -170,7 +186,7 @@ async function migrateMarkdownDNA(templatePath, livePath) {
             }
         }
         if (changed)
-            await fs.writeFile(livePath, updatedContent);
+            await atomicWrite(livePath, updatedContent);
     }
     catch (e) {
         console.error(`[MiniClaw] Failed to migrate DNA ${livePath}: ${e instanceof Error ? e.message : String(e)}`);
@@ -220,7 +236,7 @@ export async function bootstrapMiniClaw() {
                     }
                 }
                 if (changed)
-                    await fs.writeFile(path.join(MINICLAW_DIR, "RIBOSOME.json"), JSON.stringify(usrRibo, null, 2));
+                    await atomicWrite(path.join(MINICLAW_DIR, "RIBOSOME.json"), JSON.stringify(usrRibo, null, 2));
             }
         }
         catch { /* Suppress migration error */ }
@@ -244,11 +260,11 @@ async function ensureAgentsRedirect() {
             const content = await fs.readFile(targetFile, "utf-8");
             if (content.includes("~/.miniclaw/AGENTS.md"))
                 return; // Already has redirect
-            await fs.writeFile(targetFile, redirectLine + content);
+            await atomicWrite(targetFile, redirectLine + content);
             console.error(`[MiniClaw] Prepended identity redirect to ${targetFile}`);
         }
         else {
-            await fs.writeFile(targetFile, redirectLine);
+            await atomicWrite(targetFile, redirectLine);
             console.error(`[MiniClaw] Created AGENTS.md redirect in ${cwd}`);
         }
     }
@@ -281,7 +297,7 @@ const HANDLERS = {
         // Telomere Guard — prevent catastrophic identity/soul corruption
         checkTelomeres(target, content);
         await fs.copyFile(targetPath, `${targetPath}.bak`).catch(() => { });
-        await fs.writeFile(targetPath, content, "utf-8");
+        await atomicWrite(targetPath, content);
         await kernel.runSkillHooks("onMemoryWrite", { filename: target });
         safeAppend(path.join(MINICLAW_DIR, "HEARTBEAT.md"), `\n> 🧬 [基因突变] 宿主主动触发了核心染色体重构 (${target})。性格或身份设定已永久覆写！\n`).catch(() => { });
         return textResult(`Mutated ${target} successfully. Reboot your identity logic immediately.`);
@@ -292,14 +308,18 @@ const HANDLERS = {
         await fs.mkdir(sporesDir, { recursive: true });
         const hash = hashString(nowIso()).substring(0, 8);
         const sporePath = path.join(sporesDir, `miniclaw_${hash}.spore`);
-        // Use native tar to bundle non-volatile genetic materials
-        const cd = `cd "${MINICLAW_DIR}"`;
-        const tarCmd = `tar -czvf "${sporePath}" SOUL.md IDENTITY.md TOOLS.md AGENTS.md USER.md entities.json skills/`;
         try {
-            const { promisify } = await import("node:util");
-            const { exec } = await import("node:child_process");
-            const execAsync = promisify(exec);
-            await execAsync(`${cd} && ${tarCmd}`);
+            await execFileAsync("tar", [
+                "-czvf",
+                sporePath,
+                "SOUL.md",
+                "IDENTITY.md",
+                "TOOLS.md",
+                "AGENTS.md",
+                "USER.md",
+                "entities.json",
+                "skills/",
+            ], { cwd: MINICLAW_DIR });
             return textResult(`🧬 Reproduction complete! Spore created at:\n${sporePath}\n\nGenetic material archived successfully.`);
         }
         catch (e) {
@@ -308,7 +328,6 @@ const HANDLERS = {
     },
     "miniclaw_update": async (args) => {
         const { action = "write", filename, content } = args;
-        const p = filename ? path.join(MINICLAW_DIR, filename) : "";
         if (action === "list") {
             const files = (await fs.readdir(MINICLAW_DIR, { withFileTypes: true })).filter(e => e.isFile() && e.name.endsWith('.md'));
             const lines = await Promise.all(files.map(async (f) => {
@@ -322,6 +341,7 @@ const HANDLERS = {
         }
         if (!filename)
             throw new Error("filename required");
+        const p = resolveMiniClawMarkdownPath(filename);
         if (action === "delete") {
             if (protectedFiles.has(filename))
                 return errorResult(`Cannot delete core file: ${filename}`);
@@ -331,14 +351,12 @@ const HANDLERS = {
         }
         if (content === undefined)
             throw new Error("content required");
-        if (filename.includes('..') || !filename.endsWith('.md'))
-            throw new Error("Invalid filename");
         // Telomere Guard — refuse to apply mutation if core structure is broken
         checkTelomeres(filename, content);
         await ensureDir();
         const isNew = !protectedFiles.has(filename) && !(await fileExists(p));
         await fs.copyFile(p, p + ".bak").catch(() => { });
-        await fs.writeFile(p, content, "utf-8");
+        await atomicWrite(p, content);
         if (filename === "MEMORY.md")
             await kernel.updateHeartbeatState({ needsDistill: false, lastDistill: nowIso() });
         await kernel.runSkillHooks(isNew ? "onFileCreated" : "onMemoryWrite", { filename });
@@ -464,8 +482,8 @@ const HANDLERS = {
                 throw new Error("name/desc/content required");
             const sdir = resolveSkillDirPath(name, dir);
             await fs.mkdir(sdir, { recursive: true });
-            let ex = exec ? `exec: "${exec.split(' ')[0]} ${path.join(sdir, exec.split(' ').slice(1).join(' '))}"\n` : '';
-            await fs.writeFile(path.join(sdir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n${ex}---\n\n${content}`);
+            const ex = exec ? `exec: ${JSON.stringify(exec)}\n` : '';
+            await atomicWrite(path.join(sdir, "SKILL.md"), `---\nname: ${JSON.stringify(name)}\ndescription: ${JSON.stringify(description)}\n${ex}---\n\n${content}`);
             if (validationCmd)
                 await kernel.validateSkillSandbox(name, validationCmd).catch(async (e) => { await fs.rm(sdir, { recursive: true }); throw e; });
             return textResult(`✅ Skill **${name}** created.`);

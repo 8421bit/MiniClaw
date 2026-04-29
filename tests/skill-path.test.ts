@@ -85,4 +85,45 @@ describe("Skill script path resolution", () => {
             }
         }
     });
+
+    it("supports explicit interpreter runners without invoking a shell", async () => {
+        const skillsRoot = await mkdtemp(path.join(os.tmpdir(), "miniclaw-runner-"));
+        cleanupPaths.push(skillsRoot);
+        const skillDir = path.join(skillsRoot, "runner");
+        await mkdir(skillDir);
+
+        const argFile = path.join(os.tmpdir(), `miniclaw-runner-arg-${Date.now()}.json`);
+        const marker = path.join(os.tmpdir(), `miniclaw-runner-injection-${Date.now()}`);
+        cleanupPaths.push(argFile, marker);
+
+        const script = [
+            "import { writeFileSync } from 'node:fs';",
+            "writeFileSync(process.env.MINICLAW_TEST_ARG_FILE, process.argv[2] || '');",
+            "console.log('runner-ok');",
+            "",
+        ].join("\n");
+        const scriptPath = path.join(skillDir, "run.js");
+        await writeFile(scriptPath, script, "utf-8");
+
+        const originalArgFile = process.env.MINICLAW_TEST_ARG_FILE;
+        process.env.MINICLAW_TEST_ARG_FILE = argFile;
+        try {
+            const payload = `$(touch ${marker})`;
+            await expect(executeResolvedSkillScript(
+                skillDir,
+                scriptPath,
+                { payload },
+                { executable: process.execPath, args: [] }
+            )).resolves.toContain("runner-ok");
+
+            expect(await exists(marker)).toBe(false);
+            expect(JSON.parse(await readFile(argFile, "utf-8"))).toEqual({ payload });
+        } finally {
+            if (originalArgFile === undefined) {
+                delete process.env.MINICLAW_TEST_ARG_FILE;
+            } else {
+                process.env.MINICLAW_TEST_ARG_FILE = originalArgFile;
+            }
+        }
+    });
 });

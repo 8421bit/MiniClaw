@@ -11,7 +11,8 @@
         "dist",
         "templates",
         "README.md",
-        "README_EN.md"
+        "README_EN.md",
+        "LICENSE"
     ],
     "repository": {
         "type": "git",

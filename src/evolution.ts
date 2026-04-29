@@ -10,7 +10,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { today, nowIso, safeRead, safeWrite, safeAppend, safeReadJson, hoursSince, calculateSimilarity } from "./utils.js";
+import { today, nowIso, safeRead, safeWrite, safeAppend, safeReadJson, hoursSince, calculateSimilarity, atomicWrite } from "./utils.js";
 
 interface Pattern {
     type: string;
@@ -268,7 +268,7 @@ export async function triggerEvolution(miniclawDir: string): Promise<EvolutionRe
     // Update state
     state.lastEvolution = new Date().toISOString();
     state.totalEvolutions++;
-    await fs.writeFile(stateFile, JSON.stringify(state, null, 2));
+    await atomicWrite(stateFile, JSON.stringify(state, null, 2));
 
     // Try Ribosome Pruning (Epic 4.1)
     await pruneRibosome(miniclawDir, state);
@@ -323,7 +323,7 @@ async function pruneRibosome(miniclawDir: string, evolutionState: EvolutionState
 
         if (pruned) {
             ribosome.tools = remainingTools;
-            await fs.writeFile(ribosomeFile, JSON.stringify(ribosome, null, 2));
+            await atomicWrite(ribosomeFile, JSON.stringify(ribosome, null, 2));
             evolutionState.totalEvolutions++;
         }
     } catch { /* Ignore pruning errors */ }

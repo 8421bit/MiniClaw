@@ -9,7 +9,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { today, nowIso, safeRead, safeWrite, safeAppend, safeReadJson, hoursSince, calculateSimilarity } from "./utils.js";
+import { today, nowIso, safeRead, safeWrite, safeAppend, safeReadJson, hoursSince, calculateSimilarity, atomicWrite } from "./utils.js";
 function mergeSimilarPatterns(patterns) {
     if (patterns.length === 1)
         return patterns[0];
@@ -223,7 +223,7 @@ export async function triggerEvolution(miniclawDir) {
     // Update state
     state.lastEvolution = new Date().toISOString();
     state.totalEvolutions++;
-    await fs.writeFile(stateFile, JSON.stringify(state, null, 2));
+    await atomicWrite(stateFile, JSON.stringify(state, null, 2));
     // Try Ribosome Pruning (Epic 4.1)
     await pruneRibosome(miniclawDir, state);
     // Check milestones
@@ -271,7 +271,7 @@ async function pruneRibosome(miniclawDir, evolutionState) {
         });
         if (pruned) {
             ribosome.tools = remainingTools;
-            await fs.writeFile(ribosomeFile, JSON.stringify(ribosome, null, 2));
+            await atomicWrite(ribosomeFile, JSON.stringify(ribosome, null, 2));
             evolutionState.totalEvolutions++;
         }
     }
