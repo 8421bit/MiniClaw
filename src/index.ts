@@ -13,7 +13,7 @@ import {
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ContextKernel, MINICLAW_DIR } from "./kernel.js";
+import { ContextKernel, MINICLAW_DIR, resolveSkillDirPath } from "./kernel.js";
 import { textResult, errorResult, today, nowIso, fileExists, safeRead, safeReadJson, safeAppend, hashString, parseMarkdownSections } from "./utils.js";
 
 // Configuration
@@ -510,14 +510,14 @@ const HANDLERS: Record<string, (args: any) => Promise<any>> = {
         }
         if (action === "create") {
             if (!name || !description || !content) throw new Error("name/desc/content required");
-            const sdir = path.join(dir, name);
+            const sdir = resolveSkillDirPath(name, dir);
             await fs.mkdir(sdir, { recursive: true });
             let ex = exec ? `exec: "${exec.split(' ')[0]} ${path.join(sdir, exec.split(' ').slice(1).join(' '))}"\n` : '';
             await fs.writeFile(path.join(sdir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n${ex}---\n\n${content}`);
             if (validationCmd) await kernel.validateSkillSandbox(name, validationCmd).catch(async e => { await fs.rm(sdir, { recursive: true }); throw e; });
             return textResult(`✅ Skill **${name}** created.`);
         }
-        if (action === "delete") return fs.rm(path.join(dir, name), { recursive: true }).then(() => textResult(`Deleted ${name}`));
+        if (action === "delete") return fs.rm(resolveSkillDirPath(name, dir), { recursive: true }).then(() => textResult(`Deleted ${name}`));
         return errorResult("Unknown action");
     }
 };

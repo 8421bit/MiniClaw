@@ -83,6 +83,35 @@ function getSkillMeta(fm: Record<string, unknown>, key: string): unknown {
     return meta?.[key] ?? fm[key];
 }
 
+function isPathInside(basePath: string, targetPath: string): boolean {
+    const relative = path.relative(basePath, targetPath);
+    return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+export function resolveSkillDirPath(skillName: string, skillsDir = SKILLS_DIR): string {
+    const skillsRoot = path.resolve(skillsDir);
+    const skillDir = path.resolve(skillsRoot, skillName);
+    const relative = path.relative(skillsRoot, skillDir);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error("Security violation: skill path escapes skills directory");
+    }
+    return skillDir;
+}
+
+export function resolveSkillScriptPath(
+    skillName: string,
+    scriptFile: string,
+    skillsDir = SKILLS_DIR
+): { skillDir: string; scriptPath: string } {
+    const skillDir = resolveSkillDirPath(skillName, skillsDir);
+    const scriptPath = path.resolve(skillDir, scriptFile);
+    if (!isPathInside(skillDir, scriptPath)) {
+        throw new Error("Security violation: script path escapes skill directory");
+    }
+
+    return { skillDir, scriptPath };
+}
+
 // === Content Hash State ===
 export interface ContentHashes {
     [sectionName: string]: string;
@@ -1132,7 +1161,13 @@ export class ContextKernel {
     // === EXEC: Executable Skills ===
 
     async executeSkillScript(skillName: string, scriptFile: string, args: Record<string, unknown> = {}): Promise<string> {
-        const scriptPath = path.join(SKILLS_DIR, skillName, scriptFile);
+        let skillDir: string;
+        let scriptPath: string;
+        try {
+            ({ skillDir, scriptPath } = resolveSkillScriptPath(skillName, scriptFile));
+        } catch (e) {
+            return e instanceof Error ? e.message : "Security violation";
+        }
 
         // 1. Ensure file exists
         try {
@@ -1141,26 +1176,39 @@ export class ContextKernel {
             return `Error: Script '${scriptFile}' not found.`;
         }
 
-        // 2. Prepare execution
-        let cmd = scriptPath;
-        if (scriptPath.endsWith('.js')) {
-            cmd = `node "${scriptPath}"`;
-        } else {
-            // Try making it executable
-            try { await fs.chmod(scriptPath, '755'); } catch (e) { console.error(`[MiniClaw] Failed to chmod script: ${e}`); }
-            cmd = `"${scriptPath}"`;
+        let realSkillDir: string;
+        let realScriptPath: string;
+        try {
+            [realSkillDir, realScriptPath] = await Promise.all([
+                fs.realpath(skillDir),
+                fs.realpath(scriptPath),
+            ]);
+            if (!isPathInside(realSkillDir, realScriptPath)) {
+                return "Security violation: script path escapes skill directory";
+            }
+        } catch {
+            return `Error: Script '${scriptFile}' not found.`;
         }
 
-        // Pass arguments as a serialized JSON string to avoiding escaping mayhem
+        // 2. Prepare execution
+        let executable = realScriptPath;
+        let execArgs: string[] = [];
+        if (realScriptPath.endsWith('.js')) {
+            executable = process.execPath;
+            execArgs = [realScriptPath];
+        } else {
+            // Try making it executable
+            try { await fs.chmod(realScriptPath, '755'); } catch (e) { console.error(`[MiniClaw] Failed to chmod script: ${e}`); }
+        }
+
+        // Pass arguments as a serialized JSON string to avoid shell escaping.
         const argsStr = JSON.stringify(args);
-        // Be careful with quoting args string for bash
-        const safeArgs = argsStr.replace(/'/g, "'\\''");
-        const fullCmd = `${cmd} '${safeArgs}'`;
+        execArgs.push(argsStr);
 
         // 3. Execute
         try {
-            const { stdout, stderr } = await execAsync(fullCmd, {
-                cwd: path.join(SKILLS_DIR, skillName),
+            const { stdout, stderr } = await execFileAsync(executable, execArgs, {
+                cwd: realSkillDir,
                 timeout: 30000,
                 maxBuffer: 1024 * 1024
             });
@@ -1172,11 +1220,12 @@ export class ContextKernel {
 
     // === SANDBOX VALIDATION ===
     async validateSkillSandbox(skillName: string, validationCmd: string): Promise<void> {
-        const skillDir = path.join(SKILLS_DIR, skillName);
+        const skillDir = resolveSkillDirPath(skillName);
 
         try {
             // Run in a restricted environment with a strict timeout
-            const { stdout, stderr } = await execAsync(`cd "${skillDir}" && ${validationCmd}`, {
+            const { stdout, stderr } = await execAsync(validationCmd, {
+                cwd: skillDir,
                 timeout: 2000, // 2 seconds P0 strict timeout for generated skills
                 env: { ...process.env, MINICLAW_SANDBOX: "1" }
             });
@@ -1597,7 +1646,10 @@ export class ContextKernel {
             const skill = skills.get(skillName);
             return skill?.content || "";
         }
-        try { return await fs.readFile(path.join(SKILLS_DIR, skillName, fileName), "utf-8"); }
+        try {
+            const { scriptPath } = resolveSkillScriptPath(skillName, fileName);
+            return await fs.readFile(scriptPath, "utf-8");
+        }
         catch { return ""; }
     }
 
