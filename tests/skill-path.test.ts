@@ -1,7 +1,18 @@
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { ContextKernel, resolveSkillDirPath, resolveSkillScriptPath } from "../src/kernel.js";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, it } from "vitest";
+import { ContextKernel, executeResolvedSkillScript, resolveSkillDirPath, resolveSkillScriptPath } from "../src/kernel.js";
+
+const cleanupPaths: string[] = [];
+
+async function exists(filePath: string): Promise<boolean> {
+    return access(filePath).then(() => true, () => false);
+}
+
+afterEach(async () => {
+    await Promise.all(cleanupPaths.splice(0).map(p => rm(p, { recursive: true, force: true })));
+});
 
 describe("Skill script path resolution", () => {
     it("allows scripts inside a skill directory", () => {
@@ -37,5 +48,41 @@ describe("Skill script path resolution", () => {
 
         await expect(kernel.executeSkillScript("../../../../etc", "passwd", {}))
             .resolves.toContain("Security violation");
+    });
+
+    it("passes skill args without shell expansion", async () => {
+        const skillsRoot = await mkdtemp(path.join(os.tmpdir(), "miniclaw-skills-"));
+        cleanupPaths.push(skillsRoot);
+        const skillDir = path.join(skillsRoot, "issue6");
+        await mkdir(skillDir);
+
+        const argFile = path.join(os.tmpdir(), `miniclaw-arg-${Date.now()}.json`);
+        const marker = path.join(os.tmpdir(), `miniclaw-injection-${Date.now()}`);
+        cleanupPaths.push(argFile, marker);
+
+        const script = [
+            "import { writeFileSync } from 'node:fs';",
+            "writeFileSync(process.env.MINICLAW_TEST_ARG_FILE, process.argv[2] || '');",
+            "console.log('ok');",
+            "",
+        ].join("\n");
+        await writeFile(path.join(skillDir, "run.js"), script, "utf-8");
+
+        const originalArgFile = process.env.MINICLAW_TEST_ARG_FILE;
+        process.env.MINICLAW_TEST_ARG_FILE = argFile;
+        try {
+            const payload = `'; touch ${marker}; echo '`;
+            await expect(executeResolvedSkillScript(skillDir, path.join(skillDir, "run.js"), { payload }))
+                .resolves.toContain("ok");
+
+            expect(await exists(marker)).toBe(false);
+            expect(JSON.parse(await readFile(argFile, "utf-8"))).toEqual({ payload });
+        } finally {
+            if (originalArgFile === undefined) {
+                delete process.env.MINICLAW_TEST_ARG_FILE;
+            } else {
+                process.env.MINICLAW_TEST_ARG_FILE = originalArgFile;
+            }
+        }
     });
 });
